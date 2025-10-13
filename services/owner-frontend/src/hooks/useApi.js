@@ -73,9 +73,4 @@ export async function apiFetch(path, opts = {}) {
         _data: parsed,
     };
 }
-// useApi.js (quick dev change)
-export function getApiBase() {
-    // replace 192.168.1.42 with your PC ip
-    return "http://10.16.115.237:3000";
-}
 
