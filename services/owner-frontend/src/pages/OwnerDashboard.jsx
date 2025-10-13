@@ -344,8 +344,8 @@ export default function OwnerDashboard() {
 
   // ---- render ----
   return (
-    <div className="min-h-screen p-4 bg-gray-50">
-      <div className="max-w-4xl mx-auto bg-white p-4 rounded shadow">
+    <div className="min-h-screen bg-gray-50">
+      <div className="w-full sm:max-w-5xl mx-auto bg-white sm:p-4 p-2 rounded sm:rounded shadow">
         <div className="flex justify-between items-center mb-4">
           <div>
             <div className="text-sm text-gray-600">Owner</div>
