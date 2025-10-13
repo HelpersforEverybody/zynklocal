@@ -6,9 +6,10 @@ import useWindowSize from "../hooks/useWindowSize";
 import MobileBottomNav from "../components/MobileBottomNav";
 
 /**
- * OwnerDashboard — simplified single-shop owner UI
- * - Keeps top "add" form unchanged
- * - Adds inline edit form that opens under the item (web + mobile)
+ * OwnerDashboard — same logic as before, but improved responsive layout:
+ *  - Inline editor opens under the item and takes full width on mobile.
+ *  - Buttons and inputs are smaller on phones and wrap nicely.
+ *  - No logic changes.
  */
 
 export default function OwnerDashboard() {
@@ -29,16 +30,16 @@ export default function OwnerDashboard() {
   const [shopForm, setShopForm] = useState({ name: "", phone: "", address: "", pincode: "" });
   const [shopMsg, setShopMsg] = useState("");
 
-  // top add/edit item form (keeps current behavior for adding)
+  // top add/edit item form (unchanged behaviour)
   const [itemForm, setItemForm] = useState({ name: "", price: "", _editingId: null, variants: [] });
   const [itemMsg, setItemMsg] = useState("");
 
-  // inline edit state (per-item editor shown beneath item)
+  // inline edit state
   const [editingItemId, setEditingItemId] = useState(null);
   const [editingForm, setEditingForm] = useState({ name: "", price: "", _editingId: null, variants: [] });
   const [editingMsg, setEditingMsg] = useState("");
 
-  // UI view: "your-shop" | "menu" | "orders"
+  // UI view
   const [view, setView] = useState("menu");
 
   // ---- load shop/menu/orders ----
@@ -142,12 +143,12 @@ export default function OwnerDashboard() {
     }
   }
 
-  // ---- helper to detect variants presence ----
+  // ---- helpers ----
   function hasVariantsFor(form) {
     return Array.isArray(form.variants) && form.variants.length > 0;
   }
 
-  // ---- top add/edit item functions (unchanged behaviour) ----
+  // top add form functions (unchanged)
   function addVariantRow() {
     setItemForm(prev => ({ ...prev, variants: [...(prev.variants || []), { id: "", label: "", price: "", available: true }] }));
   }
@@ -215,7 +216,7 @@ export default function OwnerDashboard() {
     }
   }
 
-  // ---- inline edit helpers (new) ----
+  // ---- inline edit helpers ----
   function openInlineEdit(item) {
     setEditingMsg("");
     setEditingItemId(item._id);
@@ -225,8 +226,6 @@ export default function OwnerDashboard() {
       _editingId: item._id,
       variants: Array.isArray(item.variants) ? item.variants.map(v => ({ id: v.id || "", label: v.label || "", price: String(v.price || ""), available: typeof v.available === "boolean" ? v.available : true })) : []
     });
-    // If needed, on web we could scroll to the item — optional
-    // document.getElementById(`menu-item-${item._id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   function inlineAddVariantRow() {
@@ -296,7 +295,6 @@ export default function OwnerDashboard() {
     setEditingMsg("");
   }
 
-  // ---- startEditItem kept for compatibility but now opens inline ----
   function startEditItem(it) {
     openInlineEdit(it);
     setView("menu");
@@ -314,7 +312,18 @@ export default function OwnerDashboard() {
     }
   }
 
-  // ---- orders ----
+  async function toggleAvailability(item) {
+    setItemMsg("");
+    try {
+      const res = await apiFetch(`/api/shops/${shop._id}/items/${item._id}`, { method: "PATCH", body: { available: !item.available } });
+      if (!res.ok) { const t = await res.text(); throw new Error(t || "Toggle failed"); }
+      await loadMenu(shop._id);
+    } catch (err) {
+      console.error("toggleAvailability", err);
+      setItemMsg("Error: " + (err.message || err));
+    }
+  }
+
   async function updateOrderStatus(orderId, newStatus) {
     setMsg("");
     try {
@@ -328,18 +337,6 @@ export default function OwnerDashboard() {
     }
   }
 
-  async function toggleAvailability(item) {
-    setItemMsg("");
-    try {
-      const res = await apiFetch(`/api/shops/${shop._id}/items/${item._id}`, { method: "PATCH", body: { available: !item.available } });
-      if (!res.ok) { const t = await res.text(); throw new Error(t || "Toggle failed"); }
-      await loadMenu(shop._id);
-    } catch (err) {
-      console.error("toggleAvailability", err);
-      setItemMsg("Error: " + (err.message || err));
-    }
-  }
-
   function displayOrderLabel(o) {
     if (typeof o.orderNumber !== "undefined" && o.orderNumber !== null) return `#${String(o.orderNumber).padStart(6, "0")}`;
     return String(o._id || "").slice(0, 8);
@@ -347,39 +344,39 @@ export default function OwnerDashboard() {
 
   // ---- render ----
   return (
-    <div className="min-h-screen p-6 bg-gray-50">
-      <div className="max-w-5xl mx-auto bg-white p-4 rounded shadow">
+    <div className="min-h-screen p-4 bg-gray-50">
+      <div className="max-w-4xl mx-auto bg-white p-4 rounded shadow">
         <div className="flex justify-between items-center mb-4">
           <div>
             <div className="text-sm text-gray-600">Owner</div>
-            <div className="font-semibold">{shop ? (shop.name || "Your Shop") : "No Shop"}</div>
+            <div className="font-semibold text-base">{shop ? (shop.name || "Your Shop") : "No Shop"}</div>
           </div>
           <div className="flex gap-2 items-center">
-            <button onClick={() => { localStorage.removeItem("merchant_token"); navigate("/merchant-login"); }} className="px-3 py-1 bg-red-500 text-white rounded">Logout</button>
-            <button onClick={() => loadShop()} className="px-3 py-1 bg-gray-200 rounded">Refresh</button>
+            <button onClick={() => { localStorage.removeItem("merchant_token"); navigate("/merchant-login"); }} className="px-2 py-1 bg-red-500 text-white rounded text-sm">Logout</button>
+            <button onClick={() => loadShop()} className="px-2 py-1 bg-gray-200 rounded text-sm">Refresh</button>
           </div>
         </div>
 
         {msg && <div className="mb-3 text-sm text-red-600">{msg}</div>}
 
-        <div className="flex gap-3 mb-4">
-          <button onClick={() => setView("your-shop")} className={`px-3 py-1 rounded ${view === "your-shop" ? "bg-gray-900 text-white" : "bg-gray-200"}`}>Your Shop</button>
-          <button onClick={() => setView("menu")} className={`px-3 py-1 rounded ${view === "menu" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>Menu</button>
-          <button onClick={() => setView("orders")} className={`px-3 py-1 rounded ${view === "orders" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>Orders</button>
+        <div className="flex gap-2 mb-4">
+          <button onClick={() => setView("your-shop")} className={`px-3 py-1 rounded text-sm ${view === "your-shop" ? "bg-gray-900 text-white" : "bg-gray-200"}`}>Your Shop</button>
+          <button onClick={() => setView("menu")} className={`px-3 py-1 rounded text-sm ${view === "menu" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>Menu</button>
+          <button onClick={() => setView("orders")} className={`px-3 py-1 rounded text-sm ${view === "orders" ? "bg-blue-600 text-white" : "bg-gray-200"}`}>Orders</button>
         </div>
 
         {/* YOUR SHOP */}
         {view === "your-shop" && (
-          <div className="max-w-lg">
+          <div className="max-w-md">
             <h3 className="font-semibold mb-2">Edit Shop</h3>
             <form onSubmit={saveShop} className="space-y-3">
-              <input value={shopForm.name} onChange={e => setShopForm(s => ({ ...s, name: e.target.value }))} placeholder="Name" className="w-full p-2 border rounded" />
-              <input value={shopForm.phone} onChange={e => setShopForm(s => ({ ...s, phone: e.target.value }))} placeholder="Phone" className="w-full p-2 border rounded" />
-              <input value={shopForm.address} onChange={e => setShopForm(s => ({ ...s, address: e.target.value }))} placeholder="Address" className="w-full p-2 border rounded" />
-              <input value={shopForm.pincode} onChange={e => setShopForm(s => ({ ...s, pincode: e.target.value }))} placeholder="Pincode" className="w-full p-2 border rounded" />
-              <div className="flex gap-2">
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded">Save</button>
-                <button type="button" onClick={() => { if (shop) setShopForm({ name: shop.name || "", phone: shop.phone || "", address: shop.address || "", pincode: shop.pincode || "" }) }} className="px-4 py-2 bg-gray-200 rounded">Reset</button>
+              <input value={shopForm.name} onChange={e => setShopForm(s => ({ ...s, name: e.target.value }))} placeholder="Name" className="w-full p-2 border rounded text-sm" />
+              <input value={shopForm.phone} onChange={e => setShopForm(s => ({ ...s, phone: e.target.value }))} placeholder="Phone" className="w-full p-2 border rounded text-sm" />
+              <input value={shopForm.address} onChange={e => setShopForm(s => ({ ...s, address: e.target.value }))} placeholder="Address" className="w-full p-2 border rounded text-sm" />
+              <input value={shopForm.pincode} onChange={e => setShopForm(s => ({ ...s, pincode: e.target.value }))} placeholder="Pincode" className="w-full p-2 border rounded text-sm" />
+              <div className="flex flex-wrap gap-2">
+                <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
+                <button type="button" onClick={() => { if (shop) setShopForm({ name: shop.name || "", phone: shop.phone || "", address: shop.address || "", pincode: shop.pincode || "" }) }} className="px-3 py-1 bg-gray-200 rounded text-sm">Reset</button>
               </div>
               {shopMsg && <div className="text-sm text-gray-700 mt-1">{shopMsg}</div>}
             </form>
@@ -389,20 +386,20 @@ export default function OwnerDashboard() {
         {/* MENU */}
         {view === "menu" && (
           <>
-            <div className="mb-4 flex justify-between items-center">
+            <div className="mb-3 flex justify-between items-center">
               <h3 className="font-semibold">Menu {shop ? `for ${shop.name}` : ""}</h3>
               <div className="text-sm text-gray-500">{loading ? "Loading..." : ""}</div>
             </div>
 
-            {/* add/edit item form (top - unchanged) */}
-            <form onSubmit={submitItem} className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* top add/edit form (kept but responsive) */}
+            <form onSubmit={submitItem} className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
               <div className="md:col-span-2 space-y-2">
-                <input value={itemForm.name} onChange={e => setItemForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="w-full p-2 border rounded" />
-                {!hasVariantsFor(itemForm) && <input value={itemForm.price} onChange={e => setItemForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Base Price" type="number" className="w-40 p-2 border rounded" />}
-                <div className="flex gap-2">
-                  <button type="submit" className="px-3 py-1 bg-green-600 text-white rounded">{itemForm._editingId ? "Save" : "Add"}</button>
-                  <button type="button" onClick={() => setItemForm({ name: "", price: "", _editingId: null, variants: [] })} className="px-3 py-1 bg-gray-200 rounded">Clear</button>
-                  <button type="button" onClick={addVariantRow} className="px-3 py-1 bg-blue-600 text-white rounded">+ Add variant</button>
+                <input value={itemForm.name} onChange={e => setItemForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="w-full p-2 border rounded text-sm" />
+                {!hasVariantsFor(itemForm) && <input value={itemForm.price} onChange={e => setItemForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Base Price" type="number" className="w-full md:w-40 p-2 border rounded text-sm" />}
+                <div className="flex flex-wrap gap-2">
+                  <button type="submit" className="px-3 py-1 bg-green-600 text-white rounded text-sm">Add</button>
+                  <button type="button" onClick={() => setItemForm({ name: "", price: "", _editingId: null, variants: [] })} className="px-3 py-1 bg-gray-200 rounded text-sm">Clear</button>
+                  <button type="button" onClick={addVariantRow} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">+ Add variant</button>
                 </div>
                 {itemMsg && <div className="text-sm text-red-600">{itemMsg}</div>}
               </div>
@@ -415,10 +412,10 @@ export default function OwnerDashboard() {
                   <div className="space-y-2 max-h-48 overflow-auto">
                     {itemForm.variants.map((v, i) => (
                       <div key={i} className="flex gap-2 items-center">
-                        <input placeholder="Code" value={v.id} onChange={e => updateVariantAt(i, { id: e.target.value })} className="p-1 border rounded w-20" />
-                        <input placeholder="Label" value={v.label} onChange={e => updateVariantAt(i, { label: e.target.value })} className="p-1 border rounded flex-1" />
-                        <input placeholder="Price" value={v.price} type="number" onChange={e => updateVariantAt(i, { price: e.target.value })} className="p-1 border rounded w-24" />
-                        <button type="button" onClick={() => removeVariantAt(i)} className="px-2 py-1 bg-red-100 rounded">Remove</button>
+                        <input placeholder="Code" value={v.id} onChange={e => updateVariantAt(i, { id: e.target.value })} className="p-1 border rounded w-20 text-sm" />
+                        <input placeholder="Label" value={v.label} onChange={e => updateVariantAt(i, { label: e.target.value })} className="p-1 border rounded flex-1 text-sm" />
+                        <input placeholder="Price" value={v.price} type="number" onChange={e => updateVariantAt(i, { price: e.target.value })} className="p-1 border rounded w-24 text-sm" />
+                        <button type="button" onClick={() => removeVariantAt(i)} className="px-2 py-1 bg-red-100 rounded text-sm">Remove</button>
                       </div>
                     ))}
                   </div>
@@ -430,44 +427,44 @@ export default function OwnerDashboard() {
             <div className="space-y-3">
               {menu.length === 0 ? <div className="text-sm text-gray-500">No menu items</div> : menu.map(it => (
                 <div key={it._id} id={`menu-item-${it._id}`} className="bg-white p-3 rounded border">
-                  <div className="flex justify-between items-start gap-4">
-                    <div>
+                  <div className="flex flex-col md:flex-row justify-between items-start gap-3">
+                    <div className="flex-1">
                       <div className="font-medium">{it.name} • ₹{it.price}</div>
                       <div className="text-xs text-gray-500">{it.available ? "Available" : "Unavailable"}</div>
                       {Array.isArray(it.variants) && it.variants.length > 0 && (
                         <div className="text-sm mt-2">
                           <strong>Variants:</strong>
-                          <ul className="ml-4 list-disc">
-                            {it.variants.map((v, idx) => <li key={idx}>{v.label} — ₹{v.price} {v.available === false && <span className="text-xs text-red-600"> (disabled)</span>}</li>)}
+                          <ul className="mt-1 ml-4 list-disc">
+                            {it.variants.map((v, idx) => <li key={idx} className="text-sm text-gray-700">{v.label} — ₹{v.price} {v.available === false && <span className="text-xs text-red-600"> (disabled)</span>}</li>)}
                           </ul>
                         </div>
                       )}
                     </div>
 
-                    <div className="flex gap-2 items-start">
-                      <button onClick={() => toggleAvailability(it)} className={`px-3 py-1 rounded text-sm ${it.available ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}>
+                    <div className="flex gap-2 items-center flex-wrap">
+                      <button onClick={() => toggleAvailability(it)} className={`px-2 py-1 rounded text-sm ${it.available ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}>
                         {it.available ? "Enabled" : "Disabled"}
                       </button>
 
-                      <button onClick={() => startEditItem(it)} className="px-3 py-1 bg-yellow-400 rounded">Edit</button>
+                      <button onClick={() => startEditItem(it)} className="px-2 py-1 bg-yellow-400 rounded text-sm">Edit</button>
 
-                      <button onClick={() => deleteItem(it._id)} className="px-3 py-1 bg-gray-200 rounded">Delete</button>
+                      <button onClick={() => deleteItem(it._id)} className="px-2 py-1 bg-gray-200 rounded text-sm">Delete</button>
                     </div>
                   </div>
 
-                  {/* Inline editor shown under the specific item (web + mobile) */}
+                  {/* Inline editor under item (full width on mobile) */}
                   {editingItemId === it._id && (
                     <div className="mt-3 bg-gray-50 p-3 rounded border">
                       <form onSubmit={submitInlineEdit} className="space-y-3">
-                        <div className="flex flex-col md:flex-row md:gap-4">
-                          <input value={editingForm.name} onChange={e => setEditingForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="w-full p-2 border rounded" />
-                          <input value={editingForm.price} onChange={e => setEditingForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Base Price" type="number" className={`w-40 p-2 border rounded ${hasVariantsFor(editingForm) ? "bg-gray-100" : ""}`} disabled={hasVariantsFor(editingForm)} />
+                        <div className="flex flex-col md:flex-row md:items-start md:gap-3">
+                          <input value={editingForm.name} onChange={e => setEditingForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="w-full p-2 border rounded text-sm" />
+                          <input value={editingForm.price} onChange={e => setEditingForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Base Price" type="number" className={`w-full md:w-40 p-2 border rounded text-sm ${hasVariantsFor(editingForm) ? "bg-gray-100" : ""}`} disabled={hasVariantsFor(editingForm)} />
                         </div>
 
-                        <div className="flex gap-2">
-                          <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded">Save</button>
-                          <button type="button" onClick={cancelInlineEdit} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
-                          <button type="button" onClick={() => inlineAddVariantRow()} className="px-3 py-1 bg-blue-600 text-white rounded">+ Add variant</button>
+                        <div className="flex flex-wrap gap-2">
+                          <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
+                          <button type="button" onClick={cancelInlineEdit} className="px-3 py-1 bg-gray-200 rounded text-sm">Cancel</button>
+                          <button type="button" onClick={inlineAddVariantRow} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">+ Add variant</button>
                         </div>
 
                         <div className="bg-white p-2 rounded border">
@@ -477,11 +474,17 @@ export default function OwnerDashboard() {
                           ) : (
                             <div className="space-y-2">
                               {editingForm.variants.map((v, i) => (
-                                <div key={i} className="flex gap-2 items-center">
-                                  <input placeholder="Code" value={v.id} onChange={e => inlineUpdateVariantAt(i, { id: e.target.value })} className="p-1 border rounded w-20" />
-                                  <input placeholder="Label" value={v.label} onChange={e => inlineUpdateVariantAt(i, { label: e.target.value })} className="p-1 border rounded flex-1" />
-                                  <input placeholder="Price" value={v.price} type="number" onChange={e => inlineUpdateVariantAt(i, { price: e.target.value })} className="p-1 border rounded w-24" />
-                                  <button type="button" onClick={() => inlineRemoveVariantAt(i)} className="px-2 py-1 bg-red-100 rounded">Remove</button>
+                                <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                                  <div className="col-span-3 sm:col-span-2">
+                                    <input placeholder="Code" value={v.id} onChange={e => inlineUpdateVariantAt(i, { id: e.target.value })} className="p-1 border rounded w-full text-sm" />
+                                  </div>
+                                  <div className="col-span-6 sm:col-span-7">
+                                    <input placeholder="Label" value={v.label} onChange={e => inlineUpdateVariantAt(i, { label: e.target.value })} className="p-1 border rounded w-full text-sm" />
+                                  </div>
+                                  <div className="col-span-3 sm:col-span-3 flex items-center gap-2">
+                                    <input placeholder="Price" value={v.price} type="number" onChange={e => inlineUpdateVariantAt(i, { price: e.target.value })} className="p-1 border rounded w-full text-sm" />
+                                    <button type="button" onClick={() => inlineRemoveVariantAt(i)} className="px-2 py-1 bg-red-100 rounded text-sm">x</button>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -531,7 +534,6 @@ export default function OwnerDashboard() {
         )}
       </div>
 
-      {/* Mobile bottom nav if present */}
       {isMobile && typeof MobileBottomNav !== "undefined" && <MobileBottomNav />}
     </div>
   );
