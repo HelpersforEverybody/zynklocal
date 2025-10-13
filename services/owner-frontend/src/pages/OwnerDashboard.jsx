@@ -7,9 +7,8 @@ import MobileBottomNav from "../components/MobileBottomNav";
 
 /**
  * OwnerDashboard — simplified single-shop owner UI
- * - On mobile: Edit opens an inline editor below the item.
- * - Toggle (enable/disable) button added.
- * Functionality (API endpoints / validation) preserved.
+ * - Keeps top "add" form unchanged
+ * - Adds inline edit form that opens under the item (web + mobile)
  */
 
 export default function OwnerDashboard() {
@@ -30,19 +29,19 @@ export default function OwnerDashboard() {
   const [shopForm, setShopForm] = useState({ name: "", phone: "", address: "", pincode: "" });
   const [shopMsg, setShopMsg] = useState("");
 
-  // menu item form (top form, used on desktop / web)
+  // top add/edit item form (keeps current behavior for adding)
   const [itemForm, setItemForm] = useState({ name: "", price: "", _editingId: null, variants: [] });
   const [itemMsg, setItemMsg] = useState("");
 
-  // inline mobile editor (only used on mobile when editing a specific item)
-  const [inlineEditingId, setInlineEditingId] = useState(null);
-  const [inlineForm, setInlineForm] = useState({ name: "", price: "", _editingId: null, variants: [] });
-  const [inlineMsg, setInlineMsg] = useState("");
+  // inline edit state (per-item editor shown beneath item)
+  const [editingItemId, setEditingItemId] = useState(null);
+  const [editingForm, setEditingForm] = useState({ name: "", price: "", _editingId: null, variants: [] });
+  const [editingMsg, setEditingMsg] = useState("");
 
   // UI view: "your-shop" | "menu" | "orders"
   const [view, setView] = useState("menu");
 
-  // load merchant shops (single)
+  // ---- load shop/menu/orders ----
   async function loadShop() {
     setLoading(true);
     setMsg("");
@@ -143,12 +142,12 @@ export default function OwnerDashboard() {
     }
   }
 
-  // ---- helpers for variants ----
+  // ---- helper to detect variants presence ----
   function hasVariantsFor(form) {
     return Array.isArray(form.variants) && form.variants.length > 0;
   }
 
-  // top form variant helpers (unchanged)
+  // ---- top add/edit item functions (unchanged behaviour) ----
   function addVariantRow() {
     setItemForm(prev => ({ ...prev, variants: [...(prev.variants || []), { id: "", label: "", price: "", available: true }] }));
   }
@@ -167,26 +166,6 @@ export default function OwnerDashboard() {
     });
   }
 
-  // inline form variant helpers (mobile inline editor)
-  function inlineAddVariantRow() {
-    setInlineForm(prev => ({ ...prev, variants: [...(prev.variants || []), { id: "", label: "", price: "", available: true }] }));
-  }
-  function inlineUpdateVariantAt(index, patch) {
-    setInlineForm(prev => {
-      const vs = Array.isArray(prev.variants) ? [...prev.variants] : [];
-      vs[index] = { ...vs[index], ...patch };
-      return { ...prev, variants: vs };
-    });
-  }
-  function inlineRemoveVariantAt(index) {
-    setInlineForm(prev => {
-      const vs = Array.isArray(prev.variants) ? [...prev.variants] : [];
-      vs.splice(index, 1);
-      return { ...prev, variants: vs };
-    });
-  }
-
-  // ---- submit top form (desktop/web) ----
   async function submitItem(e) {
     e && e.preventDefault();
     setItemMsg("");
@@ -236,30 +215,61 @@ export default function OwnerDashboard() {
     }
   }
 
-  // ---- inline submit (mobile) ----
-  async function submitInline(e) {
-    e && e.preventDefault();
-    setInlineMsg("");
-    if (!shop) { setInlineMsg("Select or create a shop first"); return; }
-    if (!inlineForm.name || !String(inlineForm.name).trim()) { setInlineMsg("Item name required"); return; }
+  // ---- inline edit helpers (new) ----
+  function openInlineEdit(item) {
+    setEditingMsg("");
+    setEditingItemId(item._id);
+    setEditingForm({
+      name: item.name || "",
+      price: String(item.price || ""),
+      _editingId: item._id,
+      variants: Array.isArray(item.variants) ? item.variants.map(v => ({ id: v.id || "", label: v.label || "", price: String(v.price || ""), available: typeof v.available === "boolean" ? v.available : true })) : []
+    });
+    // If needed, on web we could scroll to the item — optional
+    // document.getElementById(`menu-item-${item._id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 
-    const variants = Array.isArray(inlineForm.variants) ? inlineForm.variants : [];
+  function inlineAddVariantRow() {
+    setEditingForm(prev => ({ ...prev, variants: [...(prev.variants || []), { id: "", label: "", price: "", available: true }] }));
+  }
+  function inlineUpdateVariantAt(index, patch) {
+    setEditingForm(prev => {
+      const vs = Array.isArray(prev.variants) ? [...prev.variants] : [];
+      vs[index] = { ...vs[index], ...patch };
+      return { ...prev, variants: vs };
+    });
+  }
+  function inlineRemoveVariantAt(index) {
+    setEditingForm(prev => {
+      const vs = Array.isArray(prev.variants) ? [...prev.variants] : [];
+      vs.splice(index, 1);
+      return { ...prev, variants: vs };
+    });
+  }
+
+  async function submitInlineEdit(e) {
+    e && e.preventDefault();
+    setEditingMsg("");
+    if (!shop) { setEditingMsg("No shop"); return; }
+    if (!editingForm.name || !String(editingForm.name).trim()) { setEditingMsg("Item name required"); return; }
+
+    const variants = Array.isArray(editingForm.variants) ? editingForm.variants : [];
     if (variants.length > 0) {
       for (let i = 0; i < variants.length; i++) {
         const v = variants[i];
-        if (!v || !v.label || v.label.trim().length === 0) { setInlineMsg(`Variant ${i + 1}: label required`); return; }
+        if (!v || !v.label || v.label.trim().length === 0) { setEditingMsg(`Variant ${i + 1}: label required`); return; }
         const p = Number(v.price || 0);
-        if (isNaN(p) || p <= 0) { setInlineMsg(`Variant "${v.label || '#' + (i + 1)}" must have price > 0`); return; }
+        if (isNaN(p) || p <= 0) { setEditingMsg(`Variant "${v.label || '#' + (i + 1)}" must have price > 0`); return; }
       }
     } else {
-      const base = Number(inlineForm.price || 0);
-      if (isNaN(base) || base <= 0) { setInlineMsg("Base price required (when no variants)"); return; }
+      const base = Number(editingForm.price || 0);
+      if (isNaN(base) || base <= 0) { setEditingMsg("Base price required (when no variants)"); return; }
     }
 
     try {
       const payload = {
-        name: String(inlineForm.name).trim(),
-        price: hasVariantsFor(inlineForm) ? 0 : Number(inlineForm.price || 0),
+        name: String(editingForm.name).trim(),
+        price: hasVariantsFor(editingForm) ? 0 : Number(editingForm.price || 0),
         variants: variants.map((v, idx) => ({
           id: v.id || String(idx + 1),
           label: v.label || v.id || `Option ${idx + 1}`,
@@ -268,48 +278,28 @@ export default function OwnerDashboard() {
         }))
       };
 
-      if (inlineForm._editingId) {
-        const res = await apiFetch(`/api/shops/${shop._id}/items/${inlineForm._editingId}`, { method: "PATCH", body: payload });
-        if (!res.ok) { const t = await res.text(); throw new Error(t || "Edit failed"); }
-        setInlineMsg("Updated");
-        setInlineEditingId(null);
-      } else {
-        const res = await apiFetch(`/api/shops/${shop._id}/items`, { method: "POST", body: payload });
-        if (!res.ok) { const t = await res.text(); throw new Error(t || "Add failed"); }
-        setInlineMsg("Added");
-      }
-
-      setInlineForm({ name: "", price: "", _editingId: null, variants: [] });
+      const res = await apiFetch(`/api/shops/${shop._id}/items/${editingForm._editingId}`, { method: "PATCH", body: payload });
+      if (!res.ok) { const t = await res.text(); throw new Error(t || "Edit failed"); }
+      setEditingMsg("Updated");
+      setEditingItemId(null);
+      setEditingForm({ name: "", price: "", _editingId: null, variants: [] });
       await loadMenu(shop._id);
     } catch (err) {
-      console.error("submitInline", err);
-      setInlineMsg("Error: " + (err.message || err));
+      console.error("submitInlineEdit", err);
+      setEditingMsg("Error: " + (err.message || err));
     }
   }
 
-  // ---- start editing (desktop vs mobile) ----
-  function startEditItem(it) {
-    // prepare shared payload
-    const prepared = {
-      name: it.name || "",
-      price: String(it.price || ""),
-      _editingId: it._id,
-      variants: Array.isArray(it.variants) ? it.variants.map(v => ({ id: v.id || "", label: v.label || "", price: String(v.price || ""), available: typeof v.available === "boolean" ? v.available : true })) : []
-    };
+  function cancelInlineEdit() {
+    setEditingItemId(null);
+    setEditingForm({ name: "", price: "", _editingId: null, variants: [] });
+    setEditingMsg("");
+  }
 
-    if (isMobile) {
-      // open inline editor for this item
-      setInlineEditingId(it._id);
-      setInlineForm(prepared);
-      setInlineMsg("");
-      // keep top form untouched on mobile
-    } else {
-      // desktop/web: populate top form (existing behavior)
-      setItemMsg("");
-      setItemForm(prepared);
-      // ensure we stay in menu view
-      setView("menu");
-    }
+  // ---- startEditItem kept for compatibility but now opens inline ----
+  function startEditItem(it) {
+    openInlineEdit(it);
+    setView("menu");
   }
 
   async function deleteItem(id) {
@@ -317,33 +307,10 @@ export default function OwnerDashboard() {
     try {
       const res = await apiFetch(`/api/shops/${shop._id}/items/${id}`, { method: "DELETE" });
       if (!res.ok) { const t = await res.text(); throw new Error(t || "Delete failed"); }
-      // if we removed inline editing target, clear it
-      if (inlineEditingId === id) {
-        setInlineEditingId(null);
-        setInlineForm({ name: "", price: "", _editingId: null, variants: [] });
-      }
       await loadMenu(shop._id);
     } catch (err) {
       console.error("deleteItem", err);
       setItemMsg("Delete failed: " + (err.message || err));
-    }
-  }
-
-  // ---- toggle availability (enable/disable) ----
-  async function toggleAvailability(item) {
-    setMsg("");
-    try {
-      const res = await apiFetch(`/api/shops/${shop._id}/items/${item._id}`, {
-        method: "PATCH",
-        body: { available: !item.available }
-      });
-      if (!res.ok) {
-        const t = await res.text(); throw new Error(t || "Toggle failed");
-      }
-      await loadMenu(shop._id);
-    } catch (err) {
-      console.error("toggleAvailability", err);
-      setMsg("Toggle failed: " + (err.message || err));
     }
   }
 
@@ -361,6 +328,18 @@ export default function OwnerDashboard() {
     }
   }
 
+  async function toggleAvailability(item) {
+    setItemMsg("");
+    try {
+      const res = await apiFetch(`/api/shops/${shop._id}/items/${item._id}`, { method: "PATCH", body: { available: !item.available } });
+      if (!res.ok) { const t = await res.text(); throw new Error(t || "Toggle failed"); }
+      await loadMenu(shop._id);
+    } catch (err) {
+      console.error("toggleAvailability", err);
+      setItemMsg("Error: " + (err.message || err));
+    }
+  }
+
   function displayOrderLabel(o) {
     if (typeof o.orderNumber !== "undefined" && o.orderNumber !== null) return `#${String(o.orderNumber).padStart(6, "0")}`;
     return String(o._id || "").slice(0, 8);
@@ -368,7 +347,7 @@ export default function OwnerDashboard() {
 
   // ---- render ----
   return (
-    <div className="min-h-screen p-4 bg-gray-50">
+    <div className="min-h-screen p-6 bg-gray-50">
       <div className="max-w-5xl mx-auto bg-white p-4 rounded shadow">
         <div className="flex justify-between items-center mb-4">
           <div>
@@ -415,11 +394,11 @@ export default function OwnerDashboard() {
               <div className="text-sm text-gray-500">{loading ? "Loading..." : ""}</div>
             </div>
 
-            {/* top add/edit item form (desktop / web; still present on mobile but inline editing preferred) */}
+            {/* add/edit item form (top - unchanged) */}
             <form onSubmit={submitItem} className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="md:col-span-2 space-y-2">
-                <input value={itemForm.name} onChange={e => setItemForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className={`w-full p-2 border rounded ${isMobile ? "text-sm" : ""}`} />
-                {!hasVariantsFor(itemForm) && <input value={itemForm.price} onChange={e => setItemForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Base Price" type="number" className={`w-40 p-2 border rounded ${isMobile ? "text-sm" : ""}`} />}
+                <input value={itemForm.name} onChange={e => setItemForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="w-full p-2 border rounded" />
+                {!hasVariantsFor(itemForm) && <input value={itemForm.price} onChange={e => setItemForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Base Price" type="number" className="w-40 p-2 border rounded" />}
                 <div className="flex gap-2">
                   <button type="submit" className="px-3 py-1 bg-green-600 text-white rounded">{itemForm._editingId ? "Save" : "Add"}</button>
                   <button type="button" onClick={() => setItemForm({ name: "", price: "", _editingId: null, variants: [] })} className="px-3 py-1 bg-gray-200 rounded">Clear</button>
@@ -450,84 +429,66 @@ export default function OwnerDashboard() {
             {/* menu list */}
             <div className="space-y-3">
               {menu.length === 0 ? <div className="text-sm text-gray-500">No menu items</div> : menu.map(it => (
-                <div key={it._id} className="bg-white p-3 rounded border">
+                <div key={it._id} id={`menu-item-${it._id}`} className="bg-white p-3 rounded border">
                   <div className="flex justify-between items-start gap-4">
-                    <div className="flex-1">
+                    <div>
                       <div className="font-medium">{it.name} • ₹{it.price}</div>
                       <div className="text-xs text-gray-500">{it.available ? "Available" : "Unavailable"}</div>
-
                       {Array.isArray(it.variants) && it.variants.length > 0 && (
                         <div className="text-sm mt-2">
                           <strong>Variants:</strong>
                           <ul className="ml-4 list-disc">
-                            {it.variants.map((v, idx) => (
-                              <li key={idx} className="text-sm text-gray-700">
-                                <span className="font-medium">{v.label || v.id}</span>
-                                {typeof v.price !== 'undefined' && (` — ₹${v.price}`)}
-                                {v.available === false && <span className="text-xs text-red-600 ml-2"> (disabled)</span>}
-                              </li>
-                            ))}
+                            {it.variants.map((v, idx) => <li key={idx}>{v.label} — ₹{v.price} {v.available === false && <span className="text-xs text-red-600"> (disabled)</span>}</li>)}
                           </ul>
                         </div>
                       )}
                     </div>
 
-                    <div className="flex flex-col items-end gap-2">
+                    <div className="flex gap-2 items-start">
                       <button onClick={() => toggleAvailability(it)} className={`px-3 py-1 rounded text-sm ${it.available ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}>
                         {it.available ? "Enabled" : "Disabled"}
                       </button>
 
-                      <div className="flex gap-2">
-                        <button onClick={() => startEditItem(it)} className="px-3 py-1 bg-yellow-400 rounded">Edit</button>
-                        <button onClick={() => deleteItem(it._id)} className="px-3 py-1 bg-gray-200 rounded">Delete</button>
-                      </div>
+                      <button onClick={() => startEditItem(it)} className="px-3 py-1 bg-yellow-400 rounded">Edit</button>
+
+                      <button onClick={() => deleteItem(it._id)} className="px-3 py-1 bg-gray-200 rounded">Delete</button>
                     </div>
                   </div>
 
-                  {/* INLINE MOBILE EDITOR — only visible when inlineEditingId === this item and on mobile */}
-                  {isMobile && inlineEditingId === it._id && (
-                    <div className="mt-3 bg-gray-50 border rounded p-3">
-                      <form onSubmit={submitInline} className="space-y-2">
-                        <div>
-                          <input value={inlineForm.name} onChange={e => setInlineForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="w-full p-2 border rounded text-sm" />
+                  {/* Inline editor shown under the specific item (web + mobile) */}
+                  {editingItemId === it._id && (
+                    <div className="mt-3 bg-gray-50 p-3 rounded border">
+                      <form onSubmit={submitInlineEdit} className="space-y-3">
+                        <div className="flex flex-col md:flex-row md:gap-4">
+                          <input value={editingForm.name} onChange={e => setEditingForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="w-full p-2 border rounded" />
+                          <input value={editingForm.price} onChange={e => setEditingForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Base Price" type="number" className={`w-40 p-2 border rounded ${hasVariantsFor(editingForm) ? "bg-gray-100" : ""}`} disabled={hasVariantsFor(editingForm)} />
                         </div>
+
                         <div className="flex gap-2">
-                          <input value={inlineForm.price} onChange={e => setInlineForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Base price" type="number" className="p-2 border rounded w-28 text-sm" disabled={hasVariantsFor(inlineForm)} />
-                          <div className="flex gap-2">
-                            <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
-                            <button type="button" onClick={() => { setInlineEditingId(null); setInlineForm({ name: "", price: "", _editingId: null, variants: [] }); setInlineMsg(""); }} className="px-3 py-1 bg-gray-200 rounded text-sm">Cancel</button>
-                          </div>
+                          <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded">Save</button>
+                          <button type="button" onClick={cancelInlineEdit} className="px-3 py-1 bg-gray-200 rounded">Cancel</button>
+                          <button type="button" onClick={() => inlineAddVariantRow()} className="px-3 py-1 bg-blue-600 text-white rounded">+ Add variant</button>
                         </div>
 
                         <div className="bg-white p-2 rounded border">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="text-sm font-medium">Variants</div>
-                            <button type="button" onClick={inlineAddVariantRow} className="px-2 py-1 bg-blue-600 text-white rounded text-sm">+ Add</button>
-                          </div>
-
-                          <div className="space-y-2 max-h-40 overflow-auto">
-                            {(!inlineForm.variants || inlineForm.variants.length === 0) ? (
-                              <div className="text-xs text-gray-500">No variants (leave empty to use base price)</div>
-                            ) : inlineForm.variants.map((v, idx) => (
-                              <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                                <div className="col-span-3">
-                                  <input value={v.id} onChange={e => inlineUpdateVariantAt(idx, { id: e.target.value })} placeholder="Code" className="p-1 border rounded w-full text-sm" />
+                          <div className="font-medium mb-2">Variants</div>
+                          {(!editingForm.variants || editingForm.variants.length === 0) ? (
+                            <div className="text-sm text-gray-500">No variants</div>
+                          ) : (
+                            <div className="space-y-2">
+                              {editingForm.variants.map((v, i) => (
+                                <div key={i} className="flex gap-2 items-center">
+                                  <input placeholder="Code" value={v.id} onChange={e => inlineUpdateVariantAt(i, { id: e.target.value })} className="p-1 border rounded w-20" />
+                                  <input placeholder="Label" value={v.label} onChange={e => inlineUpdateVariantAt(i, { label: e.target.value })} className="p-1 border rounded flex-1" />
+                                  <input placeholder="Price" value={v.price} type="number" onChange={e => inlineUpdateVariantAt(i, { price: e.target.value })} className="p-1 border rounded w-24" />
+                                  <button type="button" onClick={() => inlineRemoveVariantAt(i)} className="px-2 py-1 bg-red-100 rounded">Remove</button>
                                 </div>
-                                <div className="col-span-5">
-                                  <input value={v.label} onChange={e => inlineUpdateVariantAt(idx, { label: e.target.value })} placeholder="Label" className="p-1 border rounded w-full text-sm" />
-                                </div>
-                                <div className="col-span-2">
-                                  <input value={v.price} onChange={e => inlineUpdateVariantAt(idx, { price: e.target.value })} placeholder="Price" type="number" className="p-1 border rounded w-full text-sm" />
-                                </div>
-                                <div className="col-span-1">
-                                  <button type="button" onClick={() => inlineRemoveVariantAt(idx)} className="px-2 py-1 bg-red-100 rounded text-sm">Remove</button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
-                        {inlineMsg && <div className="text-sm text-red-600">{inlineMsg}</div>}
+                        {editingMsg && <div className="text-sm text-red-600">{editingMsg}</div>}
                       </form>
                     </div>
                   )}
@@ -570,8 +531,8 @@ export default function OwnerDashboard() {
         )}
       </div>
 
-      {/* optional mobile bottom nav if you have one */}
-      {isMobile && <MobileBottomNav active="owner" />}
+      {/* Mobile bottom nav if present */}
+      {isMobile && typeof MobileBottomNav !== "undefined" && <MobileBottomNav />}
     </div>
   );
 }
