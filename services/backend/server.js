@@ -14,44 +14,54 @@ const app = express();
 const server = http.createServer(app);
 const { Server } = require('socket.io');
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://whatsapp-saas-frontend1.onrender.com";
+// FRONTEND origin (can be set in env)
+const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || "https://whatsapp-saas-frontend1.onrender.com").trim();
 
 // --- CORS setup (replace any existing corsOptions & app.use(cors(...)) ) ---
+// List allowed origins (add any other frontend domains here)
 const ALLOWED_ORIGINS = [
-    (process.env.FRONTEND_ORIGIN || "").trim(),     // if you set FRONTEND_ORIGIN in .env
-    "http://localhost:5173",                         // Vite dev server (desktop)
+    FRONTEND_ORIGIN,
+    "https://zync-customer-frontend.onrender.com",
+    "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "capacitor://localhost",                         // Capacitor native WebView
-    "http://localhost",                              // sometimes used by webview
-    "http://10.0.2.2:5173"                           // Android emulator host mapping (optional)
+    "capacitor://localhost",
+    "http://localhost",
+    "http://10.0.2.2:5173"
 ].filter(Boolean);
 
-// flexible CORS that allows non-browser requests (no origin) and allowed origins above
+// CORS options allowing credentials and preflight
 const corsOptions = {
-    origin: (origin, callback) => {
-        // `origin` will be undefined for curl/postman/server-to-server requests — allow those
+    origin: function (origin, callback) {
+        // allow non-browser requests (curl, Postman, server-to-server)
         if (!origin) return callback(null, true);
 
-        // allow if origin is in list or matches localhost patterns
-        if (ALLOWED_ORIGINS.includes(origin)) {
-            return callback(null, true);
-        }
+        // exact match allowed origins
+        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
 
-        // fallback: allow any localhost origin (useful if you access via http://192.168.x.y:5173)
+        // allow any localhost-like origin (helps when using LAN IPs during dev)
         try {
             const u = new URL(origin);
             if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return callback(null, true);
-        } catch (e) { }
+        } catch (e) {
+            // ignore invalid origin URL parse
+        }
 
-        // Not allowed
-        return callback(new Error("Not allowed by CORS"));
+        // not allowed
+        console.warn('CORS: blocked origin ->', origin);
+        return callback(new Error('Not allowed by CORS'));
     },
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
-    credentials: true,
+    credentials: true,            // allow cookies / credentials
     preflightContinue: false,
-    optionsSuccessStatus: 204,
+    optionsSuccessStatus: 204
 };
+
+// Explicitly handle preflight OPTIONS requests (fast path)
+app.options('*', cors(corsOptions));
+
+// Apply CORS and body parsing
+app.use(cors(corsOptions));
 
 
 // apply cors + body parsing middleware
