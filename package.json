@@ -1,0 +1,13 @@
+﻿{
+  "name": "zynk-eats-root",
+  "private": true,
+  "scripts": {
+    "dev:backend": "cd services/backend && npm run dev",
+    "dev:owner": "cd services/owner-frontend && npm run dev",
+    "dev:customer": "cd services/customer-frontend && npm run dev",
+    "dev": "concurrently \"npm:dev:backend\" \"npm:dev:owner\" \"npm:dev:customer\""
+  },
+  "devDependencies": {
+    "concurrently": "7.6.0"
+  }
+}

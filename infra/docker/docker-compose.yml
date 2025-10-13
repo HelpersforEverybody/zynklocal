@@ -1,0 +1,1 @@
+﻿version: '3.8'\nservices:\n  app:\n    image: node:18\n
