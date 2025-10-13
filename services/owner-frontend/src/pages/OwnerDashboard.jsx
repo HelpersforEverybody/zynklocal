@@ -2,6 +2,8 @@
 import React, { useEffect, useState } from "react";
 import { apiFetch, getApiBase } from "../hooks/useApi";
 import { useNavigate } from "react-router-dom";
+import useWindowSize from "../hooks/useWindowSize";
+import MobileBottomNav from "../components/MobileBottomNav";
 
 /**
  * OwnerDashboard — simplified single-shop owner UI
@@ -33,6 +35,9 @@ export default function OwnerDashboard() {
 
   // UI view: "your-shop" | "menu" | "orders"
   const [view, setView] = useState("menu");
+  // responsive helper (UI-only)
+  const { isMobile } = useWindowSize();
+
 
   // load merchant shops (single)
   async function loadShop() {
