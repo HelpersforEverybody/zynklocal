@@ -367,62 +367,105 @@ export default function OwnerDashboard() {
     const [busy, setBusy] = useState(false);
 
     // replace your uploadToLocal & onFilePicked with this safer version
+    // ----- paste / replace these helpers inside your component -----
 
-    async function uploadToLocal(file) {
+    // helper to get token from localStorage (adjust key if you store it differently)
+    function getMerchantToken() {
+      return localStorage.getItem("merchant_token") || "";
+    }
+
+    // upload file (multipart) to backend and return imageUrl string
+    async function uploadToLocal(file, item) {
       const form = new FormData();
       form.append("image", file);
 
-      // use backend API base so request goes to the backend (not the frontend dev server)
-      // API_BASE is defined earlier in this file: const API_BASE = getApiBase();
+      const token = getMerchantToken();
+      if (!item || (!item._id && !item.id)) {
+        throw new Error("uploadToLocal called without a valid item object");
+      }
+
       const url = `${API_BASE.replace(/\/$/, "")}/api/upload-local/${item._id || item.id}`;
+
+
+      const headers = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
 
       const res = await fetch(url, {
         method: "POST",
         body: form,
-        credentials: "same-origin"
+        headers,             // Authorization header only (do NOT set Content-Type)
+        credentials: "include"
       });
 
-      const status = res.status;
-      const contentType = res.headers.get("content-type") || "";
+      // If unauthorized, throw helpful error
+      if (res.status === 401 || res.status === 403) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Unauthorized. Backend returned ${res.status}. ${txt}`);
+      }
 
-      if (contentType.includes("application/json")) {
-        const body = await res.json();
-        return body.imageUrl || body.url || "";
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        const json = await res.json();
+        if (!json || !json.imageUrl) throw new Error("Upload succeeded but server did not return imageUrl");
+        return json.imageUrl;
       } else {
-        if (status === 204) return "";
-        const txt = await res.text();
-        throw new Error(`Upload failed (status ${status}). Server returned non-JSON response: ${txt.slice(0, 200)}`);
+        // read text for debug
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Upload failed (status ${res.status}). Server returned non-JSON response: ${txt.slice(0, 200)}`);
       }
     }
 
-    async function onFilePicked(e) {
+    // persist imageUrl into the MenuItem DB record
+    async function persistImageUrl(shopId, itemId, imageUrl) {
+      if (!imageUrl) throw new Error("imageUrl required to persist");
+      const token = getMerchantToken();
+      const url = `${API_BASE.replace(/\/$/, "")}/api/shops/${shopId}/items/${itemId}/image`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ imageUrl })
+      });
+
+      // helpful checks
+      const text = await res.text().catch(() => "");
+      if (!res.ok) {
+        throw new Error(`Persist image failed (status ${res.status}): ${text.slice(0, 200)}`);
+      }
+      try {
+        const j = JSON.parse(text || "{}");
+        return j;
+      } catch (e) {
+        // server returned empty or non-JSON but status OK
+        return { imageUrl };
+      }
+    }
+
+    // call these from your file input handler
+    async function onFilePicked(e, item) {
       const file = e.target.files?.[0];
       if (!file) return;
-      setBusy(true);
+      if (!item || (!item._id && !item.id)) {
+        alert("No valid item found for upload");
+        return;
+      }
       try {
-        if (!file.type.startsWith("image/")) throw new Error("Select an image file");
-        if (file.size > 8 * 1024 * 1024) throw new Error("File too large (max 8MB)");
-
-        const imageUrl = await uploadToLocal(file);
-
-        if (!imageUrl) {
-          // no JSON but upload may have succeeded (if backend returns 204). Try to refresh menu or show success.
-          // For now, attempt to reload menu and show success message:
-          await loadMenu(shop._id);
-          onUploaded && onUploaded(""); // still notify parent (could be improved)
-          return;
-        }
-
-        onUploaded && onUploaded(imageUrl);
+        const imageUrl = await uploadToLocal(file, item);
+        // then persist on the item record
+        await persistImageUrl(item.shop || shop._id, item._id || item.id, imageUrl);
+        // refresh menu or update local UI
+        await loadMenu(shop._id);
+        alert("Image uploaded and saved");
       } catch (err) {
         console.error("Image upload error", err);
-        // show nicer error to user
         alert("Image upload failed: " + (err.message || err));
       } finally {
-        setBusy(false);
-        if (fileRef.current) fileRef.current.value = "";
+        if (e.target) e.target.value = "";
       }
     }
+
 
 
     return (
@@ -448,7 +491,7 @@ export default function OwnerDashboard() {
           </button>
         )}
 
-        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFilePicked} />
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => onFilePicked(e, item)} />
         {busy && <div className="absolute inset-0 bg-white/60 flex items-center justify-center text-sm">Uploading...</div>}
       </div>
     );
