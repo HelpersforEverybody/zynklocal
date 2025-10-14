@@ -302,34 +302,48 @@ export default function OwnerDashboard() {
     setEditingMsg("");
   }
 
-  function startEditItem(it) {
-    openInlineEdit(it);
-    setView("menu");
-  }
+  // replace existing startEditItem / deleteItem / toggleAvailability with this
 
-  async function deleteItem(id) {
-    if (!confirm("Delete this item?")) return;
-    try {
-      const res = await apiFetch(`/api/shops/${shop._id}/items/${id}`, { method: "DELETE" });
-      if (!res.ok) { const t = await res.text(); throw new Error(t || "Delete failed"); }
-      await loadMenu(shop._id);
-    } catch (err) {
-      console.error("deleteItem", err);
-      setItemMsg("Delete failed: " + (err.message || err));
-    }
-  }
+function startEditItem(it) {
+  console.log('[UI] startEditItem clicked', it);
+  openInlineEdit(it); // re-use same inline-open logic (scroll etc.)
+  setView("menu");
+}
 
-  async function toggleAvailability(item) {
-    setItemMsg("");
-    try {
-      const res = await apiFetch(`/api/shops/${shop._id}/items/${item._id}`, { method: "PATCH", body: { available: !item.available } });
-      if (!res.ok) { const t = await res.text(); throw new Error(t || "Toggle failed"); }
-      await loadMenu(shop._id);
-    } catch (err) {
-      console.error("toggleAvailability", err);
-      setItemMsg("Error: " + (err.message || err));
-    }
+async function deleteItem(idOrObj) {
+  // accept either id string or item object
+  const id = typeof idOrObj === 'string' ? idOrObj : (idOrObj && (idOrObj._id || idOrObj.id));
+  console.log('[UI] deleteItem called for id:', id, 'arg:', idOrObj);
+  if (!id) { setItemMsg('Delete failed: no id'); return; }
+  if (!confirm("Delete this item?")) return;
+  try {
+    const res = await apiFetch(`/api/shops/${shop._id}/items/${id}`, { method: "DELETE" });
+    console.log('[NET] DELETE resp', res && res.status);
+    if (!res.ok) { const t = await res.text(); throw new Error(t || "Delete failed"); }
+    await loadMenu(shop._id);
+  } catch (err) {
+    console.error("deleteItem", err);
+    setItemMsg("Delete failed: " + (err.message || err));
   }
+}
+
+async function toggleAvailability(itOrId) {
+  // accept either full item or id
+  const item = typeof itOrId === 'string' ? menu.find(m => (m._id === itOrId || m.id === itOrId)) : itOrId;
+  const id = item && (item._id || item.id);
+  console.log('[UI] toggleAvailability called', { id, item });
+  if (!id) { setItemMsg('Toggle failed: no id'); return; }
+  try {
+    const res = await apiFetch(`/api/shops/${shop._id}/items/${id}`, { method: "PATCH", body: { available: !item.available } });
+    console.log('[NET] PATCH toggle resp', res && res.status);
+    if (!res.ok) { const t = await res.text(); throw new Error(t || "Toggle failed"); }
+    await loadMenu(shop._id);
+  } catch (err) {
+    console.error("toggleAvailability", err);
+    setItemMsg("Error: " + (err.message || err));
+  }
+}
+
 
   async function updateOrderStatus(orderId, newStatus) {
     setMsg("");
