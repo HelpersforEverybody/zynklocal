@@ -631,36 +631,50 @@ app.patch('/api/shops/:shopId', requireOwner, async (req, res) => {
 
 // Add menu item
 // Add menu item
-app.post('/api/shops/:shopId/items', requireOwner, async (req, res) => {
+// server.js - replace the /api/shops/:shopId/items/:itemId/image handler with this
+app.post('/api/shops/:shopId/items/:itemId/image', requireOwner, async (req, res) => {
     try {
-        const { name, price } = req.body;
-        if (!name) return res.status(400).json({ error: 'name required' });
+        // Accept imageUrl === "" as "clear the image". Only reject when undefined.
+        if (typeof req.body.imageUrl === 'undefined') {
+            return res.status(400).json({ error: 'imageUrl required' });
+        }
+        const imageUrl = req.body.imageUrl;   // may be "" to clear
+        const imageKey = req.body.imageKey || null;
 
-        // Read variants safely from request body
-        const rawVariants = Array.isArray(req.body.variants) ? req.body.variants : [];
-        const normalizedVariants = rawVariants.map((v, idx) => ({
-            id: (v && v.id) ? String(v.id) : String(idx + 1),
-            label: (v && (v.label || v.id)) ? String(v.label || v.id) : `Option ${idx + 1}`,
-            price: Number((v && v.price) || 0),
-            available: typeof (v && v.available) === 'boolean' ? v.available : true,
-        }));
+        // If clearing and we have an imageKey saved in DB, attempt to delete from Cloudinary (best-effort)
+        try {
+            if ((imageUrl === "" || imageUrl === null) && imageKey && cloudinary && typeof cloudinary.uploader.destroy === 'function') {
+                // imageKey might be public_id; destroy returns callback/promise depending on lib
+                await new Promise((resolve, reject) => {
+                    cloudinary.uploader.destroy(imageKey, (err, result) => {
+                        if (err) {
+                            console.warn('Cloudinary destroy warning:', err && err.message ? err.message : err);
+                            // don't fail the request; continue to clear DB
+                            return resolve(null);
+                        }
+                        resolve(result);
+                    });
+                });
+            }
+        } catch (e) {
+            console.warn('Cloudinary delete attempted and failed:', e && e.message ? e.message : e);
+        }
 
-        const externalId = Math.random().toString(36).slice(2, 8).toUpperCase();
+        // Update DB: set imageUrl to provided value (could be empty string) and imageKey accordingly
+        const updated = await MenuItem.findOneAndUpdate(
+            { _id: req.params.itemId, shop: req.params.shopId },
+            { $set: { imageUrl: imageUrl || "", imageKey: imageKey || "" } },
+            { new: true }
+        ).lean();
 
-        const item = await MenuItem.create({
-            shop: req.params.shopId,
-            name,
-            price: Number(price || 0),
-            externalId,
-            variants: normalizedVariants,
-        });
-
-        res.status(201).json(item);
+        if (!updated) return res.status(404).json({ error: 'item not found or not owner' });
+        return res.json({ imageUrl: updated.imageUrl });
     } catch (err) {
-        console.error('Add menu item error:', err);
-        res.status(500).json({ error: 'failed to add item', detail: err.message });
+        console.error('persist image error', err);
+        return res.status(500).json({ error: 'failed to save image url' });
     }
 });
+
 
 
 // Edit menu item
