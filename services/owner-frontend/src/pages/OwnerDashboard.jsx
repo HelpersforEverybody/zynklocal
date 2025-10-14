@@ -384,7 +384,8 @@ export default function OwnerDashboard() {
         throw new Error("uploadToLocal called without a valid item object");
       }
 
-      const url = `${API_BASE.replace(/\/$/, "")}/api/upload-local/${item._id || item.id}`;
+      const url = `${API_BASE.replace(/\/$/, "")}/api/upload-cloud/${item._id || item.id}`;
+
 
 
       const headers = {};

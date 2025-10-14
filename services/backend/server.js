@@ -11,12 +11,20 @@ const Shop = require('./models/Shop');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const cloudinary = require('cloudinary').v2;
 
 
 const app = express();
 const server = http.createServer(app);
 const { Server } = require('socket.io');
-
+// configure cloudinary from env (make sure these env vars exist)
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME || '',
+    api_key: process.env.CLOUDINARY_API_KEY || '',
+    api_secret: process.env.CLOUDINARY_API_SECRET || '',
+    secure: true
+});
+const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 // FRONTEND origin (can be set in env)
 const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || "https://whatsapp-saas-frontend1.onrender.com").trim();
 
@@ -72,6 +80,54 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use('/api/shops', require('./routes/shops'));
+
+// POST /api/upload-cloud/:itemId
+// Accepts multipart/form-data field "image". Returns JSON { imageUrl, publicId }
+app.post('/api/upload-cloud/:itemId', requireOwner, memUpload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+        // stream upload to cloudinary
+        const streamUpload = (buffer) => {
+            return new Promise((resolve, reject) => {
+                const stream = cloudinary.uploader.upload_stream(
+                    { folder: process.env.CLOUDINARY_FOLDER || 'menu_items' },
+                    (error, result) => {
+                        if (error) return reject(error);
+                        resolve(result);
+                    }
+                );
+                stream.end(buffer);
+            });
+        };
+
+        const result = await streamUpload(req.file.buffer);
+        // result.secure_url is the HTTPS URL
+        const imageUrl = result.secure_url;
+        const publicId = result.public_id;
+
+        // Optionally persist onto MenuItem (best-effort). Use params: itemId and shop from req.body or try matching ownership
+        try {
+            const itemId = req.params.itemId;
+            if (itemId) {
+                // if you want to restrict by shop ownership, pass shop id in body or use req.body.shop
+                await MenuItem.findOneAndUpdate(
+                    { _id: itemId },
+                    { $set: { imageUrl, imageKey: publicId } },
+                    { new: true }
+                ).exec();
+            }
+        } catch (dbErr) {
+            console.warn('Warning: could not persist cloudinary image info:', dbErr && dbErr.message ? dbErr.message : dbErr);
+            // ignore DB errors; upload succeeded so we still return imageUrl
+        }
+
+        return res.json({ imageUrl, publicId });
+    } catch (err) {
+        console.error('upload-cloud error', err);
+        return res.status(500).json({ error: 'upload failed', detail: err && err.message ? err.message : err });
+    }
+});
 
 // Socket.IO (allow any origin for socket connections; it's separate from express CORS)
 const io = new Server(server, {
