@@ -360,85 +360,82 @@ export default function OwnerDashboard() {
   //  - Expect JSON { imageUrl: "/uploads/..." } (or full URL)
   // After uploading, persist to item record by POST /api/shops/:shopId/items/:itemId/image { imageUrl }
 
+  // ---------- REPLACE ItemImageUpload component & handleImageUploaded ----------
+
   function ItemImageUpload({ item, onUploaded }) {
-    // local hidden input
     const fileRef = useRef(null);
     const [busy, setBusy] = useState(false);
 
-    // helper to get token from localStorage (adjust key if you store it differently)
     function getMerchantToken() {
       return localStorage.getItem("merchant_token") || "";
     }
 
-    // upload file (multipart) to backend and return imageUrl string
+    // Upload to cloud route (backend will upload to Cloudinary)
     async function uploadToCloud(file, item) {
       const form = new FormData();
       form.append("image", file);
 
-      const token = getMerchantToken();
       if (!item || (!item._id && !item.id)) {
-        throw new Error("uploadToLocal called without a valid item object");
+        throw new Error("No valid item for upload");
       }
 
       const url = `${API_BASE.replace(/\/$/, "")}/api/upload-cloud/${item._id || item.id}`;
 
       const headers = {};
+      const token = getMerchantToken();
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
       const res = await fetch(url, {
         method: "POST",
         body: form,
-        headers,             // Authorization header only (do NOT set Content-Type)
+        headers,
         credentials: "include"
       });
 
-      // If unauthorized, throw helpful error
+      // Helpful explicit checks for auth
       if (res.status === 401 || res.status === 403) {
         const txt = await res.text().catch(() => "");
-        throw new Error(`Unauthorized. Backend returned ${res.status}. ${txt}`);
+        throw new Error(`Unauthorized: backend returned ${res.status}. ${txt}`);
       }
 
-      const ct = res.headers.get("content-type") || "";
+      const ct = (res.headers.get("content-type") || "").toLowerCase();
+
+      // If server returned JSON as expected
       if (ct.includes("application/json")) {
         const json = await res.json();
         if (!json || !json.imageUrl) throw new Error("Upload succeeded but server did not return imageUrl");
         return json.imageUrl;
-      } else {
-        // read text for debug
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Upload failed (status ${res.status}). Server returned non-JSON response: ${txt.slice(0, 200)}`);
       }
+
+      // Otherwise return raw text for debugging (and throw)
+      const text = await res.text().catch(() => "");
+      throw new Error(`Upload failed (status ${res.status}). Server returned: ${text.slice(0, 300)}`);
     }
 
-    // persist imageUrl into the MenuItem DB record
+    // Persist imageUrl to MenuItem using apiFetch (re-uses your helper + token logic)
     async function persistImageUrl(shopId, itemId, imageUrl) {
-      if (!imageUrl) throw new Error("imageUrl required to persist");
-      const token = getMerchantToken();
-      const url = `${API_BASE.replace(/\/$/, "")}/api/shops/${shopId}/items/${itemId}/image`;
-      const res = await fetch(url, {
+      if (!shopId || !itemId) throw new Error("shopId and itemId required to persist image");
+      // Use your apiFetch helper so headers / error handling is consistent
+      const res = await apiFetch(`/api/shops/${shopId}/items/${itemId}/image`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { "Authorization": `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ imageUrl })
+        body: { imageUrl }
       });
 
-      // helpful checks
-      const text = await res.text().catch(() => "");
+      // If backend responded with non-OK, try to read text to surface error (handles HTML pages)
       if (!res.ok) {
-        throw new Error(`Persist image failed (status ${res.status}): ${text.slice(0, 200)}`);
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Persist image failed (status ${res.status}): ${txt.slice(0, 300)}`);
       }
-      try {
-        const j = JSON.parse(text || "{}");
-        return j;
-      } catch (e) {
-        // server returned empty or non-JSON but status OK
-        return { imageUrl };
+
+      // Try to parse JSON but tolerate empty/non-JSON ok responses
+      const ct = (res.headers.get ? (res.headers.get("content-type") || "") : "");
+      if (ct.toLowerCase().includes("application/json")) {
+        return await res.json();
       }
+      // fallback: return object with imageUrl
+      return { imageUrl };
     }
 
-    // call these from your file input handler
     async function onFilePicked(e, item) {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -449,14 +446,11 @@ export default function OwnerDashboard() {
       setBusy(true);
       try {
         const imageUrl = await uploadToCloud(file, item);
-        // then persist on the item record
+        // persist on backend
         await persistImageUrl(item.shop || shop._id, item._id || item.id, imageUrl);
-        // refresh menu or update local UI
-        await loadMenu(shop._id);
-        // notify parent — upload finished
-        if (typeof onUploaded === "function") {
-          onUploaded(imageUrl);
-        }
+        // update UI via passed callback (or refresh)
+        if (typeof onUploaded === "function") onUploaded(item._id || item.id, imageUrl);
+        else await loadMenu(shop._id);
         alert("Image uploaded and saved");
       } catch (err) {
         console.error("Image upload error", err);
@@ -466,33 +460,46 @@ export default function OwnerDashboard() {
         if (e.target) e.target.value = "";
       }
     }
+    // Delete (clear) the image by persisting an empty imageUrl
+    async function deleteImage(e, item) {
+      e && e.stopPropagation();
+      if (!confirm("Delete image for this item?")) return;
+      setBusy(true);
+      try {
+        await persistImageUrl(item.shop || shop._id, item._id || item.id, "");
+        if (typeof onUploaded === "function") onUploaded(item._id || item.id, "");
+        else await loadMenu(shop._id);
+        alert("Image removed");
+      } catch (err) {
+        console.error("Delete image error", err);
+        alert("Failed to delete image: " + (err.message || err));
+      } finally {
+        setBusy(false);
+      }
+    }
 
     return (
       <div className="w-20 h-20 flex items-center justify-center rounded-md border border-dashed overflow-hidden relative">
-        {/* thumbnail if present */}
         {item.imageUrl ? (
-          <>
+          <div className="w-full h-full relative">
             <img src={item.imageUrl} alt={item.name || "item-img"} className="w-full h-full object-cover" />
-            <div className="absolute right-1 top-1 flex gap-1">
+            <div className="absolute top-0 right-0 m-1 flex gap-1">
               <button
-                title="Change image"
                 onClick={() => fileRef.current && fileRef.current.click()}
-                className="bg-white/80 p-1 rounded text-xs"
+                title="Change image"
+                className="text-xs px-2 py-1 bg-yellow-200 rounded shadow"
               >
                 Change
               </button>
               <button
+                onClick={(e) => deleteImage(e, item)}
                 title="Delete image"
-                onClick={() => {
-                  // signal parent to delete this image
-                  if (typeof onUploaded === 'function') onUploaded(null, { action: 'delete', item });
-                }}
-                className="bg-white/80 p-1 rounded text-xs"
+                className="text-xs px-2 py-1 bg-red-100 rounded shadow"
               >
                 Delete
               </button>
             </div>
-          </>
+          </div>
         ) : (
           <button
             onClick={() => fileRef.current && fileRef.current.click()}
@@ -500,7 +507,6 @@ export default function OwnerDashboard() {
             className="w-full h-full flex items-center justify-center p-1"
             title="Upload image"
           >
-            {/* basic upload + plus icon */}
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
               <circle cx="7" cy="7" r="1.5" fill="currentColor" />
@@ -523,14 +529,12 @@ export default function OwnerDashboard() {
     // update UI immediately
     setMenu(prev => prev.map(it => ((it._id === itemId || it.id === itemId) ? { ...it, imageUrl } : it)));
 
-    // persist association on backend if endpoint exists
+    // persist association on backend if endpoint exists (this is defensive, apiFetch already used in component)
     try {
-      // attempt to notify backend (endpoint should accept JSON { imageUrl })
       await apiFetch(`/api/shops/${shop._id}/items/${itemId}/image`, {
         method: "POST",
         body: { imageUrl }
       });
-      // refresh menu to ensure consistency (optional)
       await loadMenu(shop._id);
     } catch (err) {
       console.warn("Could not persist imageUrl to backend:", err);
