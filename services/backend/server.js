@@ -79,7 +79,7 @@ app.use(cors(corsOptions));
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-app.use('/api/shops', require('./routes/shops'));
+// app.use('/api/shops', require('./routes/shops'));
 
 
 // Socket.IO (allow any origin for socket connections; it's separate from express CORS)
@@ -1191,6 +1191,18 @@ try {
     // if routes file is missing or throws, log and continue (we already defined inline routes)
     console.log('No external routes/orders.js mounted or error requiring it (continuing):', e && e.message ? e.message : e);
 }
+// Mount external routes after inline ones (so inline routes take precedence)
+try {
+    const shopsRouter = require('./routes/shops');
+    if (shopsRouter && typeof shopsRouter === 'function') {
+        app.use('/api/shops', shopsRouter());
+    } else if (shopsRouter) {
+        app.use('/api/shops', shopsRouter);
+    }
+} catch (e) {
+    console.log('No external routes/shops.js mounted or error requiring it (continuing):', e && e.message ? e.message : e);
+}
+
 
 /* Start server */
 server.listen(PORT, () => console.log(`Server running with Socket.io on port ${PORT}`));
