@@ -646,6 +646,54 @@ app.delete('/api/shops/:shopId/items/:itemId', requireOwner, async (req, res) =>
         res.status(500).json({ error: 'failed' });
     }
 });
+// DELETE /api/shops/:shopId/items/:itemId/image
+// removes imageUrl/imageKey from MenuItem and deletes local file or cloudinary asset if present
+app.delete('/api/shops/:shopId/items/:itemId/image', requireOwner, async (req, res) => {
+    try {
+        const shopId = req.params.shopId;
+        const itemId = req.params.itemId;
+
+        // find item and ensure ownership
+        const item = await MenuItem.findOne({ _id: itemId, shop: shopId }).lean();
+        if (!item) return res.status(404).json({ error: 'item not found' });
+
+        // delete from local uploads dir if imageKey is a filename (local)
+        try {
+            if (item.imageKey && !item.imageKey.startsWith('cloudinary:') && item.imageKey.indexOf('/') === -1) {
+                const localPath = path.join(__dirname, 'uploads', String(item.imageKey));
+                if (fs.existsSync(localPath)) {
+                    fs.unlinkSync(localPath);
+                }
+            }
+
+            // if using cloudinary and imageKey stored as publicId, delete cloudinary asset
+            if (item.imageKey && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
+                // assume imageKey is public_id; if you stored specially, adapt accordingly
+                try {
+                    await cloudinary.uploader.destroy(item.imageKey);
+                } catch (e) {
+                    console.warn('cloudinary destroy failed', e && e.message ? e.message : e);
+                }
+            }
+        } catch (e) {
+            console.warn('Image file deletion warning:', e && e.message ? e.message : e);
+            // continue — we still will unset DB fields
+        }
+
+        // unset image fields on DB
+        const updated = await MenuItem.findOneAndUpdate(
+            { _id: itemId, shop: shopId },
+            { $set: { imageUrl: "", imageKey: "" } },
+            { new: true }
+        ).lean();
+
+        if (!updated) return res.status(404).json({ error: 'item not found or not owner' });
+        return res.json({ ok: true, imageUrl: updated.imageUrl });
+    } catch (err) {
+        console.error('delete image error', err);
+        return res.status(500).json({ error: 'failed to delete image' });
+    }
+});
 
 // List menu (public)
 app.get('/api/shops/:shopId/menu', async (req, res) => {

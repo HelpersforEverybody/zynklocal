@@ -278,7 +278,7 @@ export default function OwnerDashboard() {
           id: v.id || String(idx + 1),
           label: v.label || v.id || `Option ${idx + 1}`,
           price: Number(v.price || 0),
-          available: typeof v.available === "boolean" ? v.available : true
+          available: typeof v.available === 'boolean' ? v.available : true
         }))
       };
 
@@ -356,19 +356,14 @@ export default function OwnerDashboard() {
   // -----------------------
   // Cloudinary-only uploader:
   //  - POST multipart/form-data to /api/upload-cloud/:itemId  (Cloudinary route on backend)
-
+  //
   //  - Expect JSON { imageUrl: "/uploads/..." } (or full URL)
   // After uploading, persist to item record by POST /api/shops/:shopId/items/:itemId/image { imageUrl }
-  //
-  // If you want S3 presign later, replace ItemImageUpload.uploadToLocal with presign flow.
 
   function ItemImageUpload({ item, onUploaded }) {
     // local hidden input
     const fileRef = useRef(null);
     const [busy, setBusy] = useState(false);
-
-    // replace your uploadToLocal & onFilePicked with this safer version
-    // ----- paste / replace these helpers inside your component -----
 
     // helper to get token from localStorage (adjust key if you store it differently)
     function getMerchantToken() {
@@ -386,8 +381,6 @@ export default function OwnerDashboard() {
       }
 
       const url = `${API_BASE.replace(/\/$/, "")}/api/upload-cloud/${item._id || item.id}`;
-
-
 
       const headers = {};
       if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -453,28 +446,53 @@ export default function OwnerDashboard() {
         alert("No valid item found for upload");
         return;
       }
+      setBusy(true);
       try {
         const imageUrl = await uploadToCloud(file, item);
         // then persist on the item record
         await persistImageUrl(item.shop || shop._id, item._id || item.id, imageUrl);
         // refresh menu or update local UI
         await loadMenu(shop._id);
+        // notify parent — upload finished
+        if (typeof onUploaded === "function") {
+          onUploaded(imageUrl);
+        }
         alert("Image uploaded and saved");
       } catch (err) {
         console.error("Image upload error", err);
         alert("Image upload failed: " + (err.message || err));
       } finally {
+        setBusy(false);
         if (e.target) e.target.value = "";
       }
     }
-
-
 
     return (
       <div className="w-20 h-20 flex items-center justify-center rounded-md border border-dashed overflow-hidden relative">
         {/* thumbnail if present */}
         {item.imageUrl ? (
-          <img src={item.imageUrl} alt={item.name || "item-img"} className="w-full h-full object-cover" />
+          <>
+            <img src={item.imageUrl} alt={item.name || "item-img"} className="w-full h-full object-cover" />
+            <div className="absolute right-1 top-1 flex gap-1">
+              <button
+                title="Change image"
+                onClick={() => fileRef.current && fileRef.current.click()}
+                className="bg-white/80 p-1 rounded text-xs"
+              >
+                Change
+              </button>
+              <button
+                title="Delete image"
+                onClick={() => {
+                  // signal parent to delete this image
+                  if (typeof onUploaded === 'function') onUploaded(null, { action: 'delete', item });
+                }}
+                className="bg-white/80 p-1 rounded text-xs"
+              >
+                Delete
+              </button>
+            </div>
+          </>
         ) : (
           <button
             onClick={() => fileRef.current && fileRef.current.click()}
@@ -516,6 +534,30 @@ export default function OwnerDashboard() {
       await loadMenu(shop._id);
     } catch (err) {
       console.warn("Could not persist imageUrl to backend:", err);
+    }
+  }
+
+  // Handle delete/change actions signalled from ItemImageUpload
+  async function handleImageAction(itemOrMeta) {
+    // expects itemOrMeta to be the item (when action === 'delete')
+    // Confirm and call DELETE endpoint
+    if (!shop || !itemOrMeta) return;
+    const it = itemOrMeta;
+    const id = it._id || it.id;
+    if (!id) return;
+    if (!confirm("Delete this image?")) return;
+    try {
+      const res = await apiFetch(`/api/shops/${shop._id}/items/${id}/image`, { method: "DELETE" });
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        throw new Error(t || `Delete failed (${res.status})`);
+      }
+      // update UI
+      setMenu(prev => prev.map(m => ((m._id === id || m.id === id) ? { ...m, imageUrl: "", imageKey: "" } : m)));
+      alert("Image deleted");
+    } catch (err) {
+      console.error("Delete image error", err);
+      alert("Failed to delete image: " + (err.message || err));
     }
   }
 
@@ -634,7 +676,18 @@ export default function OwnerDashboard() {
 
                         {/* Right reserved area for image / upload button (keeps layout stable) */}
                         <div className="ml-4">
-                          <ItemImageUpload item={it} onUploaded={(imageUrl) => handleImageUploaded(itemId, imageUrl)} />
+                          <ItemImageUpload
+                            item={it}
+                            onUploaded={(imageUrlOrNull, meta) => {
+                              // if upload finished (imageUrl string), call handleImageUploaded
+                              if (typeof imageUrlOrNull === "string" && imageUrlOrNull) {
+                                handleImageUploaded(itemId, imageUrlOrNull);
+                              } else if (meta && meta.action === "delete" && meta.item) {
+                                // handle delete action
+                                handleImageAction(meta.item);
+                              }
+                            }}
+                          />
                         </div>
                       </div>
 
