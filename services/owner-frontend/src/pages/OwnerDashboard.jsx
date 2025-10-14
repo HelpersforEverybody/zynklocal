@@ -354,8 +354,9 @@ export default function OwnerDashboard() {
   // -----------------------
   // Image upload helpers
   // -----------------------
-  // Minimal local-dev-first uploader:
-  //  - POST multipart/form-data to /api/upload-local/:itemId  (multer style)
+  // Cloudinary-only uploader:
+  //  - POST multipart/form-data to /api/upload-cloud/:itemId  (Cloudinary route on backend)
+
   //  - Expect JSON { imageUrl: "/uploads/..." } (or full URL)
   // After uploading, persist to item record by POST /api/shops/:shopId/items/:itemId/image { imageUrl }
   //
@@ -375,7 +376,7 @@ export default function OwnerDashboard() {
     }
 
     // upload file (multipart) to backend and return imageUrl string
-    async function uploadToLocal(file, item) {
+    async function uploadToCloud(file, item) {
       const form = new FormData();
       form.append("image", file);
 
@@ -453,7 +454,7 @@ export default function OwnerDashboard() {
         return;
       }
       try {
-        const imageUrl = await uploadToLocal(file, item);
+        const imageUrl = await uploadToCloud(file, item);
         // then persist on the item record
         await persistImageUrl(item.shop || shop._id, item._id || item.id, imageUrl);
         // refresh menu or update local UI

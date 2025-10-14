@@ -81,53 +81,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use('/api/shops', require('./routes/shops'));
 
-// POST /api/upload-cloud/:itemId
-// Accepts multipart/form-data field "image". Returns JSON { imageUrl, publicId }
-app.post('/api/upload-cloud/:itemId', requireOwner, memUpload.single('image'), async (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-        // stream upload to cloudinary
-        const streamUpload = (buffer) => {
-            return new Promise((resolve, reject) => {
-                const stream = cloudinary.uploader.upload_stream(
-                    { folder: process.env.CLOUDINARY_FOLDER || 'menu_items' },
-                    (error, result) => {
-                        if (error) return reject(error);
-                        resolve(result);
-                    }
-                );
-                stream.end(buffer);
-            });
-        };
-
-        const result = await streamUpload(req.file.buffer);
-        // result.secure_url is the HTTPS URL
-        const imageUrl = result.secure_url;
-        const publicId = result.public_id;
-
-        // Optionally persist onto MenuItem (best-effort). Use params: itemId and shop from req.body or try matching ownership
-        try {
-            const itemId = req.params.itemId;
-            if (itemId) {
-                // if you want to restrict by shop ownership, pass shop id in body or use req.body.shop
-                await MenuItem.findOneAndUpdate(
-                    { _id: itemId },
-                    { $set: { imageUrl, imageKey: publicId } },
-                    { new: true }
-                ).exec();
-            }
-        } catch (dbErr) {
-            console.warn('Warning: could not persist cloudinary image info:', dbErr && dbErr.message ? dbErr.message : dbErr);
-            // ignore DB errors; upload succeeded so we still return imageUrl
-        }
-
-        return res.json({ imageUrl, publicId });
-    } catch (err) {
-        console.error('upload-cloud error', err);
-        return res.status(500).json({ error: 'upload failed', detail: err && err.message ? err.message : err });
-    }
-});
 
 // Socket.IO (allow any origin for socket connections; it's separate from express CORS)
 const io = new Server(server, {
@@ -332,81 +285,51 @@ const requireOwner = async (req, res, next) => {
     }
     next();
 };
-// ---------- Image upload (local dev) ----------
-// Minimal multer-based upload handler that saves to ./uploads and returns JSON { imageUrl }
-// Requires: npm i multer
-
-
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
-if (!fs.existsSync(UPLOAD_DIR)) {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
-
-// simple disk storage with timestamped filename
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-    filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname) || '.jpg';
-        const name = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
-        cb(null, name);
-    }
-});
-const upload = multer({
-    storage,
-    limits: { fileSize: 8 * 1024 * 1024 }, // 8MB limit
-    fileFilter: (req, file, cb) => {
-        if (!file.mimetype.startsWith('image/')) return cb(new Error('Not an image'), false);
-        cb(null, true);
-    }
-});
-
-// serve uploads folder publicly
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// POST /api/upload-local/:itemId
-// Accepts multipart/form-data field "image". Returns JSON { imageUrl }
-app.post('/api/upload-local/:itemId', requireOwner, upload.single('image'), async (req, res) => {
+// POST /api/upload-cloud/:itemId
+// Accepts multipart/form-data field "image". Returns JSON { imageUrl, publicId }
+app.post('/api/upload-cloud/:itemId', requireOwner, memUpload.single('image'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-        // public URL (adjust if you serve behind a proxy or use absolute URL)
-        const imageUrl = `/uploads/${req.file.filename}`;
+        // stream upload to cloudinary
+        const streamUpload = (buffer) => {
+            return new Promise((resolve, reject) => {
+                const stream = cloudinary.uploader.upload_stream(
+                    { folder: process.env.CLOUDINARY_FOLDER || 'menu_items' },
+                    (error, result) => {
+                        if (error) return reject(error);
+                        resolve(result);
+                    }
+                );
+                stream.end(buffer);
+            });
+        };
 
-        // Optional: attach to MenuItem right away (best-effort)
+        const result = await streamUpload(req.file.buffer);
+        // result.secure_url is the HTTPS URL
+        const imageUrl = result.secure_url;
+        const publicId = result.public_id;
+
+        // Optionally persist onto MenuItem (best-effort). Use params: itemId and shop from req.body or try matching ownership
         try {
             const itemId = req.params.itemId;
             if (itemId) {
-                await MenuItem.findOneAndUpdate({ _id: itemId, shop: req.body.shop || undefined }, { $set: { imageUrl, imageKey: req.file.filename } }).exec();
+                // if you want to restrict by shop ownership, pass shop id in body or use req.body.shop
+                await MenuItem.findOneAndUpdate(
+                    { _id: itemId },
+                    { $set: { imageUrl, imageKey: publicId } },
+                    { new: true }
+                ).exec();
             }
-        } catch (e) {
-            // ignore DB errors here — we'll still return imageUrl
-            console.warn('Warning: could not persist imageUrl on upload:', e && e.message ? e.message : e);
+        } catch (dbErr) {
+            console.warn('Warning: could not persist cloudinary image info:', dbErr && dbErr.message ? dbErr.message : dbErr);
+            // ignore DB errors; upload succeeded so we still return imageUrl
         }
 
-        return res.json({ imageUrl });
+        return res.json({ imageUrl, publicId });
     } catch (err) {
-        console.error('upload-local error', err);
-        return res.status(500).json({ error: 'upload failed', detail: (err && err.message) || err });
-    }
-});
-
-// Persist imageUrl explicitly via API (frontend calls this after presigned/S3 or after upload)
-app.post('/api/shops/:shopId/items/:itemId/image', requireOwner, async (req, res) => {
-    try {
-        const { imageUrl, imageKey } = req.body || {};
-        if (!imageUrl) return res.status(400).json({ error: 'imageUrl required' });
-
-        const updated = await MenuItem.findOneAndUpdate(
-            { _id: req.params.itemId, shop: req.params.shopId },
-            { $set: { imageUrl, imageKey: imageKey || "" } },
-            { new: true }
-        ).lean();
-
-        if (!updated) return res.status(404).json({ error: 'item not found or not owner' });
-        return res.json({ imageUrl: updated.imageUrl });
-    } catch (err) {
-        console.error('persist image error', err);
-        return res.status(500).json({ error: 'failed to save image url' });
+        console.error('upload-cloud error', err);
+        return res.status(500).json({ error: 'upload failed', detail: err && err.message ? err.message : err });
     }
 });
 
