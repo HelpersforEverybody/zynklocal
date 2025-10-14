@@ -7,9 +7,9 @@ import MobileBottomNav from "../components/MobileBottomNav";
 
 /**
  * OwnerDashboard — inline editor + delete + enable/disable preserved.
- * Buttons moved to the right (they wrap on small screens).
+ * Buttons moved to the bottom-right of each item card so top area can host an image later.
  * Inline editor opens under the item and takes full width on mobile.
- * No logic changes compared to your last version.
+ * No logic changes.
  */
 
 export default function OwnerDashboard() {
@@ -226,8 +226,6 @@ export default function OwnerDashboard() {
       _editingId: item._id,
       variants: Array.isArray(item.variants) ? item.variants.map(v => ({ id: v.id || "", label: v.label || "", price: String(v.price || ""), available: typeof v.available === "boolean" ? v.available : true })) : []
     });
-
-    // scroll to the item element slightly (improves mobile UX)
     setTimeout(() => {
       const el = document.getElementById(`menu-item-${item._id}`);
       if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -307,7 +305,7 @@ export default function OwnerDashboard() {
   }
 
   async function deleteItem(idOrObj) {
-    const id = typeof idOrObj === "string" ? idOrObj : (idOrObj && (idOrObj._id || idOrObj.id));
+    const id = typeof idOrObj === 'string' ? idOrObj : (idOrObj && (idOrObj._id || idOrObj.id));
     if (!id) { setItemMsg('Delete failed: no id'); return; }
     if (!confirm("Delete this item?")) return;
     try {
@@ -441,44 +439,28 @@ export default function OwnerDashboard() {
                   const itemId = it._id || it.id;
                   return (
                     <div key={itemId} id={`menu-item-${itemId}`} className="bg-white p-3 rounded border">
-                      {/* info + right-aligned buttons (wrap on small screens) */}
-                      <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div className="flex-1 pr-3 min-w-0">
-                          <div className="font-medium truncate">{it.name} • ₹{it.price}</div>
-                          <div className="text-xs text-gray-500">{it.available ? "Available" : "Unavailable"}</div>
+                      {/* Top area — name / availability / variants (room for image above later) */}
+                      <div>
+                        <div className="font-medium">{it.name} • ₹{it.price}</div>
+                        <div className="text-xs text-gray-500">{it.available ? "Available" : "Unavailable"}</div>
 
-                          {Array.isArray(it.variants) && it.variants.length > 0 && (
-                            <div className="text-sm mt-2">
-                              <strong>Variants:</strong>
-                              <ul className="mt-1 ml-4 list-disc">
-                                {it.variants.map((v, idx) => (
-                                  <li key={idx} className="text-sm text-gray-700">
-                                    <span className="font-medium">{v.label || v.id}</span>
-                                    {typeof v.price !== 'undefined' && (` — ₹${v.price}`)}
-                                    {v.available === false && <span className="text-xs text-red-600 ml-2"> (disabled)</span>}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* actions: pushed to right (ml-auto) and wrap on mobile */}
-                        <div className="flex gap-2 items-center ml-auto">
-                          <button
-                            onClick={() => toggleAvailability(it)}
-                            className={`px-2 py-1 rounded text-sm ${it.available ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}
-                          >
-                            {it.available ? "Enabled" : "Disabled"}
-                          </button>
-
-                          <button onClick={() => startEditItem(it)} className="px-2 py-1 bg-yellow-400 rounded text-sm">Edit</button>
-
-                          <button onClick={() => deleteItem(itemId)} className="px-2 py-1 bg-gray-200 rounded text-sm">Delete</button>
-                        </div>
+                        {Array.isArray(it.variants) && it.variants.length > 0 && (
+                          <div className="text-sm mt-2">
+                            <strong>Variants:</strong>
+                            <ul className="mt-1 ml-4 list-disc">
+                              {it.variants.map((v, idx) => (
+                                <li key={idx} className="text-sm text-gray-700">
+                                  <span className="font-medium">{v.label || v.id}</span>
+                                  {typeof v.price !== 'undefined' && (` — ₹${v.price}`)}
+                                  {v.available === false && <span className="text-xs text-red-600 ml-2"> (disabled)</span>}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
 
-                      {/* Inline editor under item */}
+                      {/* Inline editor under item (if opened) */}
                       {editingItemId === itemId && (
                         <div className="mt-3 bg-gray-50 p-3 rounded border">
                           <form onSubmit={submitInlineEdit} className="space-y-3">
@@ -521,6 +503,22 @@ export default function OwnerDashboard() {
                           </form>
                         </div>
                       )}
+
+                      {/* Buttons moved to bottom-right of card (space freed above for image) */}
+                      <div className="mt-3 flex justify-end">
+                        <div className="flex gap-2 items-center flex-wrap">
+                          <button
+                            onClick={() => toggleAvailability(it)}
+                            className={`px-2 py-1 rounded text-sm ${it.available ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}
+                          >
+                            {it.available ? "Enabled" : "Disabled"}
+                          </button>
+
+                          <button onClick={() => startEditItem(it)} className="px-2 py-1 bg-yellow-400 rounded text-sm">Edit</button>
+
+                          <button onClick={() => deleteItem(itemId)} className="px-2 py-1 bg-gray-200 rounded text-sm">Delete</button>
+                        </div>
+                      </div>
                     </div>
                   );
                 })}
