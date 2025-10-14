@@ -8,6 +8,9 @@ const bcrypt = require('bcryptjs');
 const Counter = require('./models/Counter');
 const mongoose = require('mongoose');
 const Shop = require('./models/Shop');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 
 
 const app = express();
@@ -69,7 +72,6 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use('/api/shops', require('./routes/shops'));
-
 
 // Socket.IO (allow any origin for socket connections; it's separate from express CORS)
 const io = new Server(server, {
@@ -146,18 +148,23 @@ const menuItemSchema = new mongoose.Schema({
     price: { type: Number, default: 0 }, // base price (used if no variants)
     available: { type: Boolean, default: true },
     externalId: { type: String },
+
+    // store image URL (public) and optional storage key (S3 key or filename)
+    imageUrl: { type: String, default: "" },
+    imageKey: { type: String, default: "" },
+
     // New: variants array for sub-items/options
-    // Each variant keeps an id, label (display), price (per unit), and availability
     variants: [
         {
-            id: { type: String },          // owner-provided short id (e.g. "500g", "1kg", "A", "B")
-            label: { type: String },       // human-friendly text ("500 g", "1 kg")
-            price: { type: Number, default: 0 }, // price for this variant
+            id: { type: String },
+            label: { type: String },
+            price: { type: Number, default: 0 },
             available: { type: Boolean, default: true }
         }
     ],
     createdAt: { type: Date, default: Date.now },
 });
+
 menuItemSchema.index({ shop: 1, externalId: 1 });
 const MenuItem = mongoose.models.MenuItem || mongoose.model('MenuItem', menuItemSchema);
 
@@ -269,6 +276,83 @@ const requireOwner = async (req, res, next) => {
     }
     next();
 };
+// ---------- Image upload (local dev) ----------
+// Minimal multer-based upload handler that saves to ./uploads and returns JSON { imageUrl }
+// Requires: npm i multer
+
+
+const UPLOAD_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOAD_DIR)) {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+
+// simple disk storage with timestamped filename
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname) || '.jpg';
+        const name = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+        cb(null, name);
+    }
+});
+const upload = multer({
+    storage,
+    limits: { fileSize: 8 * 1024 * 1024 }, // 8MB limit
+    fileFilter: (req, file, cb) => {
+        if (!file.mimetype.startsWith('image/')) return cb(new Error('Not an image'), false);
+        cb(null, true);
+    }
+});
+
+// serve uploads folder publicly
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// POST /api/upload-local/:itemId
+// Accepts multipart/form-data field "image". Returns JSON { imageUrl }
+app.post('/api/upload-local/:itemId', requireOwner, upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+        // public URL (adjust if you serve behind a proxy or use absolute URL)
+        const imageUrl = `/uploads/${req.file.filename}`;
+
+        // Optional: attach to MenuItem right away (best-effort)
+        try {
+            const itemId = req.params.itemId;
+            if (itemId) {
+                await MenuItem.findOneAndUpdate({ _id: itemId, shop: req.body.shop || undefined }, { $set: { imageUrl, imageKey: req.file.filename } }).exec();
+            }
+        } catch (e) {
+            // ignore DB errors here — we'll still return imageUrl
+            console.warn('Warning: could not persist imageUrl on upload:', e && e.message ? e.message : e);
+        }
+
+        return res.json({ imageUrl });
+    } catch (err) {
+        console.error('upload-local error', err);
+        return res.status(500).json({ error: 'upload failed', detail: (err && err.message) || err });
+    }
+});
+
+// Persist imageUrl explicitly via API (frontend calls this after presigned/S3 or after upload)
+app.post('/api/shops/:shopId/items/:itemId/image', requireOwner, async (req, res) => {
+    try {
+        const { imageUrl, imageKey } = req.body || {};
+        if (!imageUrl) return res.status(400).json({ error: 'imageUrl required' });
+
+        const updated = await MenuItem.findOneAndUpdate(
+            { _id: req.params.itemId, shop: req.params.shopId },
+            { $set: { imageUrl, imageKey: imageKey || "" } },
+            { new: true }
+        ).lean();
+
+        if (!updated) return res.status(404).json({ error: 'item not found or not owner' });
+        return res.json({ imageUrl: updated.imageUrl });
+    } catch (err) {
+        console.error('persist image error', err);
+        return res.status(500).json({ error: 'failed to save image url' });
+    }
+});
 
 // requireCustomer - verify JWT with role 'customer'
 const requireCustomer = (req, res, next) => {
