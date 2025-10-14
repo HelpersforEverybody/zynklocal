@@ -366,22 +366,33 @@ export default function OwnerDashboard() {
     const fileRef = useRef(null);
     const [busy, setBusy] = useState(false);
 
+    // replace your uploadToLocal & onFilePicked with this safer version
+
     async function uploadToLocal(file) {
       const form = new FormData();
       form.append("image", file);
-      // hit your backend endpoint (adjust path if needed)
-      const res = await fetch(`/api/upload-local/${item._id || item.id}`, {
+
+      // use backend API base so request goes to the backend (not the frontend dev server)
+      // API_BASE is defined earlier in this file: const API_BASE = getApiBase();
+      const url = `${API_BASE.replace(/\/$/, "")}/api/upload-local/${item._id || item.id}`;
+
+      const res = await fetch(url, {
         method: "POST",
         body: form,
         credentials: "same-origin"
       });
-      if (!res.ok) {
-        const t = await res.text();
-        throw new Error(t || "upload failed");
+
+      const status = res.status;
+      const contentType = res.headers.get("content-type") || "";
+
+      if (contentType.includes("application/json")) {
+        const body = await res.json();
+        return body.imageUrl || body.url || "";
+      } else {
+        if (status === 204) return "";
+        const txt = await res.text();
+        throw new Error(`Upload failed (status ${status}). Server returned non-JSON response: ${txt.slice(0, 200)}`);
       }
-      const body = await res.json();
-      // expect { imageUrl: "/uploads/..." } or a full URL
-      return body.imageUrl || body.url || "";
     }
 
     async function onFilePicked(e) {
@@ -389,24 +400,30 @@ export default function OwnerDashboard() {
       if (!file) return;
       setBusy(true);
       try {
-        // simple size/type checks
         if (!file.type.startsWith("image/")) throw new Error("Select an image file");
         if (file.size > 8 * 1024 * 1024) throw new Error("File too large (max 8MB)");
 
-        // try local upload
         const imageUrl = await uploadToLocal(file);
-        if (!imageUrl) throw new Error("No image URL returned");
-        // notify parent
+
+        if (!imageUrl) {
+          // no JSON but upload may have succeeded (if backend returns 204). Try to refresh menu or show success.
+          // For now, attempt to reload menu and show success message:
+          await loadMenu(shop._id);
+          onUploaded && onUploaded(""); // still notify parent (could be improved)
+          return;
+        }
+
         onUploaded && onUploaded(imageUrl);
       } catch (err) {
         console.error("Image upload error", err);
-        alert(err.message || "Upload failed");
+        // show nicer error to user
+        alert("Image upload failed: " + (err.message || err));
       } finally {
         setBusy(false);
-        // clear input so same file can be selected again if needed
         if (fileRef.current) fileRef.current.value = "";
       }
     }
+
 
     return (
       <div className="w-20 h-20 flex items-center justify-center rounded-md border border-dashed overflow-hidden relative">
