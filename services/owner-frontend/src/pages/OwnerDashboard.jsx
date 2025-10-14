@@ -444,83 +444,99 @@ async function toggleAvailability(itOrId) {
               </div>
             </form>
 
-            {/* menu list */}
-            <div className="space-y-3">
-              {menu.length === 0 ? <div className="text-sm text-gray-500">No menu items</div> : menu.map(it => (
-                <div key={it._id} id={`menu-item-${it._id}`} className="bg-white p-3 rounded border">
-                  <div className="flex flex-col md:flex-row justify-between items-start gap-3">
-                    <div className="flex-1">
-                      <div className="font-medium">{it.name} • ₹{it.price}</div>
-                      <div className="text-xs text-gray-500">{it.available ? "Available" : "Unavailable"}</div>
-                      {Array.isArray(it.variants) && it.variants.length > 0 && (
-                        <div className="text-sm mt-2">
-                          <strong>Variants:</strong>
-                          <ul className="mt-1 ml-4 list-disc">
-                            {it.variants.map((v, idx) => <li key={idx} className="text-sm text-gray-700">{v.label} — ₹{v.price} {v.available === false && <span className="text-xs text-red-600"> (disabled)</span>}</li>)}
-                          </ul>
+           {menu.length === 0 ? (
+  <div className="text-sm text-gray-500">No menu items</div>
+) : (
+  menu.map(it => {
+    const itemId = it._id || it.id;
+    return (
+      <div key={itemId} id={`menu-item-${itemId}`} className="bg-white p-3 rounded border">
+        {/* single-row layout: info (flex-1) on left, buttons on right */}
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex-1 pr-3 min-w-0">
+            <div className="font-medium truncate">{it.name} • ₹{it.price}</div>
+            <div className="text-xs text-gray-500">{it.available ? "Available" : "Unavailable"}</div>
+
+            {Array.isArray(it.variants) && it.variants.length > 0 && (
+              <div className="text-sm mt-2">
+                <strong>Variants:</strong>
+                <ul className="mt-1 ml-4 list-disc">
+                  {it.variants.map((v, idx) => (
+                    <li key={idx} className="text-sm text-gray-700">
+                      <span className="font-medium">{v.label || v.id}</span>
+                      {typeof v.price !== 'undefined' && (` — ₹${v.price}`)}
+                      {v.available === false && <span className="text-xs text-red-600 ml-2"> (disabled)</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          {/* buttons container pushed to right; wraps on small screens */}
+          <div className="flex gap-2 items-center ml-auto">
+            <button
+              onClick={() => toggleAvailability(it)}
+              className={`px-2 py-1 rounded text-sm ${it.available ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}
+            >
+              {it.available ? "Enabled" : "Disabled"}
+            </button>
+
+            <button onClick={() => startEditItem(it)} className="px-2 py-1 bg-yellow-400 rounded text-sm">Edit</button>
+
+            <button onClick={() => deleteItem(itemId)} className="px-2 py-1 bg-gray-200 rounded text-sm">Delete</button>
+          </div>
+        </div>
+
+        {/* Inline editor under item (unchanged) */}
+        {editingItemId === itemId && (
+          <div className="mt-3 bg-gray-50 p-3 rounded border">
+            {/* ... your existing inline editor form code remains the same ... */}
+            <form onSubmit={submitInlineEdit} className="space-y-3">
+              <div className="flex flex-col md:flex-row md:items-start md:gap-3">
+                <input value={editingForm.name} onChange={e => setEditingForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="w-full p-2 border rounded text-sm" />
+                <input value={editingForm.price} onChange={e => setEditingForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Base Price" type="number" className={`w-full md:w-40 p-2 border rounded text-sm ${hasVariantsFor(editingForm) ? "bg-gray-100" : ""}`} disabled={hasVariantsFor(editingForm)} />
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
+                <button type="button" onClick={cancelInlineEdit} className="px-3 py-1 bg-gray-200 rounded text-sm">Cancel</button>
+                <button type="button" onClick={inlineAddVariantRow} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">+ Add variant</button>
+              </div>
+
+              <div className="bg-white p-2 rounded border">
+                <div className="font-medium mb-2">Variants</div>
+                {(!editingForm.variants || editingForm.variants.length === 0) ? (
+                  <div className="text-sm text-gray-500">No variants</div>
+                ) : (
+                  <div className="space-y-2">
+                    {editingForm.variants.map((v, i) => (
+                      <div key={i} className="grid grid-cols-12 gap-2 items-center">
+                        <div className="col-span-3 sm:col-span-2">
+                          <input placeholder="Code" value={v.id} onChange={e => inlineUpdateVariantAt(i, { id: e.target.value })} className="p-1 border rounded w-full text-sm" />
                         </div>
-                      )}
-                    </div>
-
-                    <div className="flex gap-2 items-center flex-wrap">
-                      <button onClick={() => toggleAvailability(it)} className={`px-2 py-1 rounded text-sm ${it.available ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}>
-                        {it.available ? "Enabled" : "Disabled"}
-                      </button>
-
-                      <button onClick={() => startEditItem(it)} className="px-2 py-1 bg-yellow-400 rounded text-sm">Edit</button>
-
-                      <button onClick={() => deleteItem(it._id)} className="px-2 py-1 bg-gray-200 rounded text-sm">Delete</button>
-                    </div>
+                        <div className="col-span-6 sm:col-span-7">
+                          <input placeholder="Label" value={v.label} onChange={e => inlineUpdateVariantAt(i, { label: e.target.value })} className="p-1 border rounded w-full text-sm" />
+                        </div>
+                        <div className="col-span-3 sm:col-span-3 flex items-center gap-2">
+                          <input placeholder="Price" value={v.price} type="number" onChange={e => inlineUpdateVariantAt(i, { price: e.target.value })} className="p-1 border rounded w-full text-sm" />
+                          <button type="button" onClick={() => inlineRemoveVariantAt(i)} className="px-2 py-1 bg-red-100 rounded text-sm">x</button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
+                )}
+              </div>
 
-                  {/* Inline editor under item (full width on mobile) */}
-                  {editingItemId === it._id && (
-                    <div className="mt-3 bg-gray-50 p-3 rounded border">
-                      <form onSubmit={submitInlineEdit} className="space-y-3">
-                        <div className="flex flex-col md:flex-row md:items-start md:gap-3">
-                          <input value={editingForm.name} onChange={e => setEditingForm(prev => ({ ...prev, name: e.target.value }))} placeholder="Item name" className="w-full p-2 border rounded text-sm" />
-                          <input value={editingForm.price} onChange={e => setEditingForm(prev => ({ ...prev, price: e.target.value }))} placeholder="Base Price" type="number" className={`w-full md:w-40 p-2 border rounded text-sm ${hasVariantsFor(editingForm) ? "bg-gray-100" : ""}`} disabled={hasVariantsFor(editingForm)} />
-                        </div>
-
-                        <div className="flex flex-wrap gap-2">
-                          <button type="submit" className="px-3 py-1 bg-blue-600 text-white rounded text-sm">Save</button>
-                          <button type="button" onClick={cancelInlineEdit} className="px-3 py-1 bg-gray-200 rounded text-sm">Cancel</button>
-                          <button type="button" onClick={inlineAddVariantRow} className="px-3 py-1 bg-blue-600 text-white rounded text-sm">+ Add variant</button>
-                        </div>
-
-                        <div className="bg-white p-2 rounded border">
-                          <div className="font-medium mb-2">Variants</div>
-                          {(!editingForm.variants || editingForm.variants.length === 0) ? (
-                            <div className="text-sm text-gray-500">No variants</div>
-                          ) : (
-                            <div className="space-y-2">
-                              {editingForm.variants.map((v, i) => (
-                                <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                                  <div className="col-span-3 sm:col-span-2">
-                                    <input placeholder="Code" value={v.id} onChange={e => inlineUpdateVariantAt(i, { id: e.target.value })} className="p-1 border rounded w-full text-sm" />
-                                  </div>
-                                  <div className="col-span-6 sm:col-span-7">
-                                    <input placeholder="Label" value={v.label} onChange={e => inlineUpdateVariantAt(i, { label: e.target.value })} className="p-1 border rounded w-full text-sm" />
-                                  </div>
-                                  <div className="col-span-3 sm:col-span-3 flex items-center gap-2">
-                                    <input placeholder="Price" value={v.price} type="number" onChange={e => inlineUpdateVariantAt(i, { price: e.target.value })} className="p-1 border rounded w-full text-sm" />
-                                    <button type="button" onClick={() => inlineRemoveVariantAt(i)} className="px-2 py-1 bg-red-100 rounded text-sm">x</button>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        {editingMsg && <div className="text-sm text-red-600">{editingMsg}</div>}
-                      </form>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </>
+              {editingMsg && <div className="text-sm text-red-600">{editingMsg}</div>}
+            </form>
+          </div>
         )}
+      </div>
+    );
+  })
+)}
+
 
         {/* ORDERS */}
         {view === "orders" && (
