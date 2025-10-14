@@ -1,5 +1,5 @@
 // services/owner-frontend/src/pages/OwnerDashboard.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { apiFetch, getApiBase } from "../hooks/useApi";
 import { useNavigate } from "react-router-dom";
 import useWindowSize from "../hooks/useWindowSize";
@@ -9,7 +9,7 @@ import MobileBottomNav from "../components/MobileBottomNav";
  * OwnerDashboard — inline editor + delete + enable/disable preserved.
  * Buttons moved to the bottom-right of each item card so top area can host an image later.
  * Inline editor opens under the item and takes full width on mobile.
- * No logic changes.
+ * No logic changes except adding small image-upload UI (local dev flow).
  */
 
 export default function OwnerDashboard() {
@@ -219,15 +219,16 @@ export default function OwnerDashboard() {
   // ---- inline edit helpers ----
   function openInlineEdit(item) {
     setEditingMsg("");
-    setEditingItemId(item._id);
+    const itemId = item._id || item.id;
+    setEditingItemId(itemId);
     setEditingForm({
       name: item.name || "",
       price: String(item.price || ""),
-      _editingId: item._id,
+      _editingId: itemId,
       variants: Array.isArray(item.variants) ? item.variants.map(v => ({ id: v.id || "", label: v.label || "", price: String(v.price || ""), available: typeof v.available === "boolean" ? v.available : true })) : []
     });
     setTimeout(() => {
-      const el = document.getElementById(`menu-item-${item._id}`);
+      const el = document.getElementById(`menu-item-${itemId}`);
       if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 120);
   }
@@ -350,7 +351,115 @@ export default function OwnerDashboard() {
     return String(o._id || "").slice(0, 8);
   }
 
-  // ---- render ----
+  // -----------------------
+  // Image upload helpers
+  // -----------------------
+  // Minimal local-dev-first uploader:
+  //  - POST multipart/form-data to /api/upload-local/:itemId  (multer style)
+  //  - Expect JSON { imageUrl: "/uploads/..." } (or full URL)
+  // After uploading, persist to item record by POST /api/shops/:shopId/items/:itemId/image { imageUrl }
+  //
+  // If you want S3 presign later, replace ItemImageUpload.uploadToLocal with presign flow.
+
+  function ItemImageUpload({ item, onUploaded }) {
+    // local hidden input
+    const fileRef = useRef(null);
+    const [busy, setBusy] = useState(false);
+
+    async function uploadToLocal(file) {
+      const form = new FormData();
+      form.append("image", file);
+      // hit your backend endpoint (adjust path if needed)
+      const res = await fetch(`/api/upload-local/${item._id || item.id}`, {
+        method: "POST",
+        body: form,
+        credentials: "same-origin"
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || "upload failed");
+      }
+      const body = await res.json();
+      // expect { imageUrl: "/uploads/..." } or a full URL
+      return body.imageUrl || body.url || "";
+    }
+
+    async function onFilePicked(e) {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setBusy(true);
+      try {
+        // simple size/type checks
+        if (!file.type.startsWith("image/")) throw new Error("Select an image file");
+        if (file.size > 8 * 1024 * 1024) throw new Error("File too large (max 8MB)");
+
+        // try local upload
+        const imageUrl = await uploadToLocal(file);
+        if (!imageUrl) throw new Error("No image URL returned");
+        // notify parent
+        onUploaded && onUploaded(imageUrl);
+      } catch (err) {
+        console.error("Image upload error", err);
+        alert(err.message || "Upload failed");
+      } finally {
+        setBusy(false);
+        // clear input so same file can be selected again if needed
+        if (fileRef.current) fileRef.current.value = "";
+      }
+    }
+
+    return (
+      <div className="w-20 h-20 flex items-center justify-center rounded-md border border-dashed overflow-hidden relative">
+        {/* thumbnail if present */}
+        {item.imageUrl ? (
+          <img src={item.imageUrl} alt={item.name || "item-img"} className="w-full h-full object-cover" />
+        ) : (
+          <button
+            onClick={() => fileRef.current && fileRef.current.click()}
+            aria-label="Upload image"
+            className="w-full h-full flex items-center justify-center p-1"
+            title="Upload image"
+          >
+            {/* basic upload + plus icon */}
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
+              <circle cx="7" cy="7" r="1.5" fill="currentColor" />
+              <path d="M12 11V6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M9 9l3-3 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M18 19H6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        )}
+
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFilePicked} />
+        {busy && <div className="absolute inset-0 bg-white/60 flex items-center justify-center text-sm">Uploading...</div>}
+      </div>
+    );
+  }
+
+  // Called when ItemImageUpload finishes uploading and returns imageUrl
+  async function handleImageUploaded(itemId, imageUrl) {
+    if (!shop) return;
+    // update UI immediately
+    setMenu(prev => prev.map(it => ((it._id === itemId || it.id === itemId) ? { ...it, imageUrl } : it)));
+
+    // persist association on backend if endpoint exists
+    try {
+      // attempt to notify backend (endpoint should accept JSON { imageUrl })
+      await apiFetch(`/api/shops/${shop._id}/items/${itemId}/image`, {
+        method: "POST",
+        body: { imageUrl }
+      });
+      // refresh menu to ensure consistency (optional)
+      await loadMenu(shop._id);
+    } catch (err) {
+      console.warn("Could not persist imageUrl to backend:", err);
+    }
+  }
+
+  // -----------------------
+  // Render
+  // -----------------------
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="w-full sm:max-w-5xl mx-auto bg-white sm:p-4 p-2 rounded sm:rounded shadow">
@@ -440,24 +549,31 @@ export default function OwnerDashboard() {
                   return (
                     <div key={itemId} id={`menu-item-${itemId}`} className="bg-white p-3 rounded border">
                       {/* Top area — name / availability / variants (room for image above later) */}
-                      <div>
-                        <div className="font-medium">{it.name} • ₹{it.price}</div>
-                        <div className="text-xs text-gray-500">{it.available ? "Available" : "Unavailable"}</div>
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="font-medium">{it.name} • ₹{it.price}</div>
+                          <div className="text-xs text-gray-500">{it.available ? "Available" : "Unavailable"}</div>
 
-                        {Array.isArray(it.variants) && it.variants.length > 0 && (
-                          <div className="text-sm mt-2">
-                            <strong>Variants:</strong>
-                            <ul className="mt-1 ml-4 list-disc">
-                              {it.variants.map((v, idx) => (
-                                <li key={idx} className="text-sm text-gray-700">
-                                  <span className="font-medium">{v.label || v.id}</span>
-                                  {typeof v.price !== 'undefined' && (` — ₹${v.price}`)}
-                                  {v.available === false && <span className="text-xs text-red-600 ml-2"> (disabled)</span>}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
+                          {Array.isArray(it.variants) && it.variants.length > 0 && (
+                            <div className="text-sm mt-2">
+                              <strong>Variants:</strong>
+                              <ul className="mt-1 ml-4 list-disc">
+                                {it.variants.map((v, idx) => (
+                                  <li key={idx} className="text-sm text-gray-700">
+                                    <span className="font-medium">{v.label || v.id}</span>
+                                    {typeof v.price !== 'undefined' && (` — ₹${v.price}`)}
+                                    {v.available === false && <span className="text-xs text-red-600 ml-2"> (disabled)</span>}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Right reserved area for image / upload button (keeps layout stable) */}
+                        <div className="ml-4">
+                          <ItemImageUpload item={it} onUploaded={(imageUrl) => handleImageUploaded(itemId, imageUrl)} />
+                        </div>
                       </div>
 
                       {/* Inline editor under item (if opened) */}
