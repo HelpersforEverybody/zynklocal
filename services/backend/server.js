@@ -494,6 +494,66 @@ app.post('/auth/verify-otp', async (req, res) => {
 // Health
 app.get('/status', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
+// Persist imageUrl (frontend calls this after upload)
+// POST /api/shops/:shopId/items/:itemId/image  { imageUrl, imageKey? }
+app.post('/api/shops/:shopId/items/:itemId/image', requireOwner, async (req, res) => {
+    try {
+        const { imageUrl, imageKey } = req.body || {};
+        if (!imageUrl) return res.status(400).json({ error: 'imageUrl required' });
+
+        // ensure owner owns the shop
+        const shop = await Shop.findById(req.params.shopId).lean();
+        if (!shop) return res.status(404).json({ error: 'shop not found' });
+        if (String(shop.owner) !== String(req.merchantId)) return res.status(403).json({ error: 'forbidden' });
+
+        const updated = await MenuItem.findOneAndUpdate(
+            { _id: req.params.itemId, shop: req.params.shopId },
+            { $set: { imageUrl: imageUrl, imageKey: imageKey || "" } },
+            { new: true }
+        ).lean();
+
+        if (!updated) return res.status(404).json({ error: 'item not found or not owner' });
+        return res.json({ ok: true, imageUrl: updated.imageUrl });
+    } catch (err) {
+        console.error('persist image error', err);
+        return res.status(500).json({ error: 'failed to save image url' });
+    }
+});
+
+// Delete image association (and optionally cloudinary resource if imageKey is a cloudinary public_id)
+// DELETE /api/shops/:shopId/items/:itemId/image
+app.delete('/api/shops/:shopId/items/:itemId/image', requireOwner, async (req, res) => {
+    try {
+        const shop = await Shop.findById(req.params.shopId).lean();
+        if (!shop) return res.status(404).json({ error: 'shop not found' });
+        if (String(shop.owner) !== String(req.merchantId)) return res.status(403).json({ error: 'forbidden' });
+
+        const item = await MenuItem.findOne({ _id: req.params.itemId, shop: req.params.shopId });
+        if (!item) return res.status(404).json({ error: 'item not found' });
+
+        const oldKey = item.imageKey || ""; // may be cloudinary public_id or filename (local)
+        // remove association
+        item.imageUrl = "";
+        item.imageKey = "";
+        await item.save();
+
+        // optional: remove Cloudinary asset if you store public_id in imageKey
+        if (process.env.CLOUDINARY_API_KEY && oldKey && oldKey.startsWith('menu_items/')) {
+            // adjust check based on how you store public_id (maybe no folder prefix)
+            try {
+                await cloudinary.uploader.destroy(oldKey, { invalidate: true });
+            } catch (e) {
+                console.warn('failed to delete cloudinary asset', oldKey, e && e.message);
+            }
+        }
+
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error('delete image error', err);
+        return res.status(500).json({ error: 'failed to delete image' });
+    }
+});
+
 // Create shop (owner-only)
 app.post('/api/shops', requireOwner, async (req, res) => {
     try {
