@@ -412,71 +412,78 @@ export default function OwnerDashboard() {
       throw new Error(`Upload failed (status ${res.status}). Server returned: ${text.slice(0, 300)}`);
     }
 
-    // Persist imageUrl to MenuItem using apiFetch (re-uses your helper + token logic)
-    async function persistImageUrl(shopId, itemId, imageUrl) {
+    // ---------- paste/replace these inside OwnerDashboard component ----------
+
+    // Persist imageUrl into the MenuItem DB record (safe, uses raw fetch)
+    async function persistImageUrlFetch(shopId, itemId, imageUrl) {
       if (!shopId || !itemId) throw new Error("shopId and itemId required to persist image");
-      // Use your apiFetch helper so headers / error handling is consistent
-      const res = await apiFetch(`/api/shops/${shopId}/items/${itemId}/image`, {
+
+      const url = `${API_BASE.replace(/\/$/, "")}/api/shops/${shopId}/items/${itemId}/image`;
+      const token = localStorage.getItem("merchant_token") || "";
+
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(url, {
         method: "POST",
-        body: { imageUrl }
+        headers,
+        body: JSON.stringify({ imageUrl }) // imageUrl may be "" to clear
       });
 
-      // If backend responded with non-OK, try to read text to surface error (handles HTML pages)
+      // If not ok return useful error message (avoid parsing HTML as JSON)
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        throw new Error(`Persist image failed (status ${res.status}): ${txt.slice(0, 300)}`);
+        throw new Error(`Persist image failed (status ${res.status}): ${txt.slice(0, 200)}`);
       }
 
-      // Try to parse JSON but tolerate empty/non-JSON ok responses
-      const ct = (res.headers.get ? (res.headers.get("content-type") || "") : "");
-      if (ct.toLowerCase().includes("application/json")) {
+      // Try to parse JSON if content-type indicates JSON, otherwise return a simple object
+      const contentType = (res.headers && res.headers.get) ? (res.headers.get("content-type") || "") : "";
+      if (contentType.toLowerCase().includes("application/json")) {
         return await res.json();
       }
-      // fallback: return object with imageUrl
       return { imageUrl };
     }
 
-    async function onFilePicked(e, item) {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      if (!item || (!item._id && !item.id)) {
-        alert("No valid item found for upload");
-        return;
-      }
-      setBusy(true);
+    // Called when ItemImageUpload finishes uploading and returns imageUrl
+    async function handleImageUploaded(itemId, imageUrl) {
+      if (!shop) return;
+      // update UI immediately
+      setMenu(prev => prev.map(it => ((it._id === itemId || it.id === itemId) ? { ...it, imageUrl } : it)));
+
       try {
-        const imageUrl = await uploadToCloud(file, item);
-        // persist on backend
-        await persistImageUrl(item.shop || shop._id, item._id || item.id, imageUrl);
-        // update UI via passed callback (or refresh)
-        if (typeof onUploaded === "function") onUploaded(item._id || item.id, imageUrl);
-        else await loadMenu(shop._id);
-        alert("Image uploaded and saved");
+        // persist association on backend using fetch-based helper
+        await persistImageUrlFetch(shop._id, itemId, imageUrl);
+        // refresh menu to ensure consistency
+        await loadMenu(shop._id);
       } catch (err) {
-        console.error("Image upload error", err);
+        console.warn("Could not persist imageUrl to backend:", err);
+        // inform user in a friendly way
         alert("Image upload failed: " + (err.message || err));
-      } finally {
-        setBusy(false);
-        if (e.target) e.target.value = "";
       }
     }
-    // Delete (clear) the image by persisting an empty imageUrl
-    async function deleteImage(e, item) {
-      e && e.stopPropagation();
-      if (!confirm("Delete image for this item?")) return;
-      setBusy(true);
+
+    // Delete/clear image for an item (call from UI where you want a 'Remove' button)
+    async function deleteImageForItem(item) {
+      if (!item) return;
+      if (!confirm("Remove image for this item?")) return;
+      const shopId = item.shop || shop?._id;
+      const itemId = item._id || item.id;
+      if (!shopId || !itemId) { alert("Missing shop or item id"); return; }
+
       try {
-        await persistImageUrl(item.shop || shop._id, item._id || item.id, "");
-        if (typeof onUploaded === "function") onUploaded(item._id || item.id, "");
-        else await loadMenu(shop._id);
+        // UI optimistic update
+        setMenu(prev => prev.map(it => ((it._id === itemId || it.id === itemId) ? { ...it, imageUrl: "" } : it)));
+        await persistImageUrlFetch(shopId, itemId, ""); // empty string means "clear" on backend
+        await loadMenu(shop._id);
         alert("Image removed");
       } catch (err) {
         console.error("Delete image error", err);
         alert("Failed to delete image: " + (err.message || err));
-      } finally {
-        setBusy(false);
+        // reload to ensure UI reflects actual state
+        await loadMenu(shop._id);
       }
     }
+
 
     return (
       <div className="w-20 h-20 flex items-center justify-center rounded-md border border-dashed overflow-hidden relative">
