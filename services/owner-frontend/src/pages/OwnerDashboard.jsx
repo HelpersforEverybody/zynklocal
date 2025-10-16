@@ -362,6 +362,10 @@ export default function OwnerDashboard() {
 
   // ---------- REPLACE ItemImageUpload component & handleImageUploaded ----------
 
+  // Replace only the ItemImageUpload and related functions in OwnerDashboard.jsx
+
+  // ---------- REPLACE ItemImageUpload component & handleImageUploaded ----------
+
   function ItemImageUpload({ item, onUploaded }) {
     const fileRef = useRef(null);
     const [busy, setBusy] = useState(false);
@@ -392,22 +396,19 @@ export default function OwnerDashboard() {
         credentials: "include"
       });
 
-      // Helpful explicit checks for auth
       if (res.status === 401 || res.status === 403) {
         const txt = await res.text().catch(() => "");
         throw new Error(`Unauthorized: backend returned ${res.status}. ${txt}`);
       }
 
       const ct = (res.headers.get("content-type") || "").toLowerCase();
-
-      // If server returned JSON as expected
       if (ct.includes("application/json")) {
         const json = await res.json();
         if (!json || !json.imageUrl) throw new Error("Upload succeeded but server did not return imageUrl");
-        return json.imageUrl;
+        // Ensure full URL if relative path
+        return json.imageUrl.startsWith("http") ? json.imageUrl : `${API_BASE}${json.imageUrl}`;
       }
 
-      // Otherwise return raw text for debugging (and throw)
       const text = await res.text().catch(() => "");
       throw new Error(`Upload failed (status ${res.status}). Server returned: ${text.slice(0, 300)}`);
     }
@@ -425,7 +426,7 @@ export default function OwnerDashboard() {
         alert("Upload failed: " + (err.message || err));
       } finally {
         setBusy(false);
-        if (fileRef.current) fileRef.current.value = ""; // Reset input for next upload
+        if (fileRef.current) fileRef.current.value = ""; // Reset input
       }
     }
 
@@ -440,7 +441,11 @@ export default function OwnerDashboard() {
       try {
         // UI optimistic update
         setMenu(prev => prev.map(it => ((it._id === itemId || it.id === itemId) ? { ...it, imageUrl: "" } : it)));
-        await persistImageUrlFetch(shopId, itemId, ""); // Clear image
+        const res = await apiFetch(`/api/shops/${shopId}/items/${itemId}/image`, { method: "DELETE" });
+        if (!res.ok) {
+          const txt = await res.text().catch(() => "");
+          throw new Error(`Delete failed (status ${res.status}): ${txt.slice(0, 200)}`);
+        }
         await loadMenu(shop._id);
         alert("Image removed");
       } catch (err) {
@@ -454,7 +459,12 @@ export default function OwnerDashboard() {
       <div className="w-20 h-20 flex items-center justify-center rounded-md border border-dashed overflow-hidden relative">
         {item.imageUrl ? (
           <div className="w-full h-full relative">
-            <img src={item.imageUrl} alt={item.name || "item-img"} className="w-full h-full object-cover" />
+            <img
+              src={item.imageUrl}
+              alt={item.name || "item-img"}
+              className="w-full h-full object-cover"
+              onError={(e) => { e.target.src = "/placeholder-image.jpg"; console.log("Image load failed, using placeholder"); }} // Fallback
+            />
             <div className="absolute top-0 right-0 m-1 flex gap-1">
               <button
                 onClick={() => fileRef.current && fileRef.current.click()}
@@ -511,13 +521,11 @@ export default function OwnerDashboard() {
       body: JSON.stringify({ imageUrl }) // imageUrl may be "" to clear
     });
 
-    // If not ok return useful error message (avoid parsing HTML as JSON)
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
       throw new Error(`Persist image failed (status ${res.status}): ${txt.slice(0, 200)}`);
     }
 
-    // Try to parse JSON if content-type indicates JSON, otherwise return a simple object
     const contentType = (res.headers && res.headers.get) ? (res.headers.get("content-type") || "") : "";
     if (contentType.toLowerCase().includes("application/json")) {
       return await res.json();
@@ -540,18 +548,10 @@ export default function OwnerDashboard() {
     }
   }
 
-  // Handle image actions (delete/change)
-  async function handleImageAction(item) {
-    if (!item) return;
-    const itemId = item._id || item.id;
-    if (!itemId) return;
+  // Handle image actions (delete/change) - No longer needed as delete is handled directly
+  // async function handleImageAction(item) { ... } // Removed since delete is now in deleteImageForItem
 
-    if (item.imageUrl) {
-      await deleteImageForItem(item); // Handle delete
-    } else {
-      fileRef.current && fileRef.current.click(); // Trigger change/upload
-    }
-  }
+  // Keep the rest of your code unchanged (render, shop, menu, orders, etc.)
 
   // -----------------------
   // Render
@@ -671,9 +671,11 @@ export default function OwnerDashboard() {
                           <ItemImageUpload
                             item={it}
                             onUploaded={(imageUrlOrNull, meta) => {
+                              // if upload finished (imageUrl string), call handleImageUploaded
                               if (typeof imageUrlOrNull === "string" && imageUrlOrNull) {
                                 handleImageUploaded(itemId, imageUrlOrNull);
                               } else if (meta && meta.action === "delete" && meta.item) {
+                                // handle delete action
                                 handleImageAction(meta.item);
                               }
                             }}
