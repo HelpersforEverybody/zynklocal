@@ -412,57 +412,24 @@ export default function OwnerDashboard() {
       throw new Error(`Upload failed (status ${res.status}). Server returned: ${text.slice(0, 300)}`);
     }
 
-    // ---------- paste/replace these inside OwnerDashboard component ----------
+    // Handle file selection and upload
+    async function onFilePicked(e, item) {
+      const file = e.target.files[0];
+      if (!file) return;
 
-    // Persist imageUrl into the MenuItem DB record (safe, uses raw fetch)
-    async function persistImageUrlFetch(shopId, itemId, imageUrl) {
-      if (!shopId || !itemId) throw new Error("shopId and itemId required to persist image");
-
-      const url = `${API_BASE.replace(/\/$/, "")}/api/shops/${shopId}/items/${itemId}/image`;
-      const token = localStorage.getItem("merchant_token") || "";
-
-      const headers = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ imageUrl }) // imageUrl may be "" to clear
-      });
-
-      // If not ok return useful error message (avoid parsing HTML as JSON)
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Persist image failed (status ${res.status}): ${txt.slice(0, 200)}`);
-      }
-
-      // Try to parse JSON if content-type indicates JSON, otherwise return a simple object
-      const contentType = (res.headers && res.headers.get) ? (res.headers.get("content-type") || "") : "";
-      if (contentType.toLowerCase().includes("application/json")) {
-        return await res.json();
-      }
-      return { imageUrl };
-    }
-
-    // Called when ItemImageUpload finishes uploading and returns imageUrl
-    async function handleImageUploaded(itemId, imageUrl) {
-      if (!shop) return;
-      // update UI immediately
-      setMenu(prev => prev.map(it => ((it._id === itemId || it.id === itemId) ? { ...it, imageUrl } : it)));
-
+      setBusy(true);
       try {
-        // persist association on backend using fetch-based helper
-        await persistImageUrlFetch(shop._id, itemId, imageUrl);
-        // refresh menu to ensure consistency
-        await loadMenu(shop._id);
+        const imageUrl = await uploadToCloud(file, item);
+        onUploaded(item._id || item.id, imageUrl); // Trigger update
       } catch (err) {
-        console.warn("Could not persist imageUrl to backend:", err);
-        // inform user in a friendly way
-        alert("Image upload failed: " + (err.message || err));
+        alert("Upload failed: " + (err.message || err));
+      } finally {
+        setBusy(false);
+        if (fileRef.current) fileRef.current.value = ""; // Reset input for next upload
       }
     }
 
-    // Delete/clear image for an item (call from UI where you want a 'Remove' button)
+    // Delete/clear image for an item
     async function deleteImageForItem(item) {
       if (!item) return;
       if (!confirm("Remove image for this item?")) return;
@@ -473,17 +440,15 @@ export default function OwnerDashboard() {
       try {
         // UI optimistic update
         setMenu(prev => prev.map(it => ((it._id === itemId || it.id === itemId) ? { ...it, imageUrl: "" } : it)));
-        await persistImageUrlFetch(shopId, itemId, ""); // empty string means "clear" on backend
+        await persistImageUrlFetch(shopId, itemId, ""); // Clear image
         await loadMenu(shop._id);
         alert("Image removed");
       } catch (err) {
         console.error("Delete image error", err);
         alert("Failed to delete image: " + (err.message || err));
-        // reload to ensure UI reflects actual state
-        await loadMenu(shop._id);
+        await loadMenu(shop._id); // Reload to sync UI
       }
     }
-
 
     return (
       <div className="w-20 h-20 flex items-center justify-center rounded-md border border-dashed overflow-hidden relative">
@@ -499,7 +464,7 @@ export default function OwnerDashboard() {
                 Change
               </button>
               <button
-                onClick={(e) => deleteImage(e, item)}
+                onClick={() => deleteImageForItem(item)}
                 title="Delete image"
                 className="text-xs px-2 py-1 bg-red-100 rounded shadow"
               >
@@ -530,45 +495,61 @@ export default function OwnerDashboard() {
     );
   }
 
-  // Called when ItemImageUpload finishes uploading and returns imageUrl
+  // Persist imageUrl into the MenuItem DB record (safe, uses raw fetch)
+  async function persistImageUrlFetch(shopId, itemId, imageUrl) {
+    if (!shopId || !itemId) throw new Error("shopId and itemId required to persist image");
+
+    const url = `${API_BASE.replace(/\/$/, "")}/api/shops/${shopId}/items/${itemId}/image`;
+    const token = localStorage.getItem("merchant_token") || "";
+
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ imageUrl }) // imageUrl may be "" to clear
+    });
+
+    // If not ok return useful error message (avoid parsing HTML as JSON)
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(`Persist image failed (status ${res.status}): ${txt.slice(0, 200)}`);
+    }
+
+    // Try to parse JSON if content-type indicates JSON, otherwise return a simple object
+    const contentType = (res.headers && res.headers.get) ? (res.headers.get("content-type") || "") : "";
+    if (contentType.toLowerCase().includes("application/json")) {
+      return await res.json();
+    }
+    return { imageUrl };
+  }
+
+  // Called when ItemImageUpload finishes uploading
   async function handleImageUploaded(itemId, imageUrl) {
     if (!shop) return;
-    // update UI immediately
+    // Update UI immediately
     setMenu(prev => prev.map(it => ((it._id === itemId || it.id === itemId) ? { ...it, imageUrl } : it)));
 
-    // persist association on backend if endpoint exists (this is defensive, apiFetch already used in component)
     try {
-      await apiFetch(`/api/shops/${shop._id}/items/${itemId}/image`, {
-        method: "POST",
-        body: { imageUrl }
-      });
-      await loadMenu(shop._id);
+      await persistImageUrlFetch(shop._id, itemId, imageUrl);
+      await loadMenu(shop._id); // Refresh to ensure consistency
     } catch (err) {
       console.warn("Could not persist imageUrl to backend:", err);
+      alert("Image upload failed: " + (err.message || err));
     }
   }
 
-  // Handle delete/change actions signalled from ItemImageUpload
-  async function handleImageAction(itemOrMeta) {
-    // expects itemOrMeta to be the item (when action === 'delete')
-    // Confirm and call DELETE endpoint
-    if (!shop || !itemOrMeta) return;
-    const it = itemOrMeta;
-    const id = it._id || it.id;
-    if (!id) return;
-    if (!confirm("Delete this image?")) return;
-    try {
-      const res = await apiFetch(`/api/shops/${shop._id}/items/${id}/image`, { method: "DELETE" });
-      if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        throw new Error(t || `Delete failed (${res.status})`);
-      }
-      // update UI
-      setMenu(prev => prev.map(m => ((m._id === id || m.id === id) ? { ...m, imageUrl: "", imageKey: "" } : m)));
-      alert("Image deleted");
-    } catch (err) {
-      console.error("Delete image error", err);
-      alert("Failed to delete image: " + (err.message || err));
+  // Handle image actions (delete/change)
+  async function handleImageAction(item) {
+    if (!item) return;
+    const itemId = item._id || item.id;
+    if (!itemId) return;
+
+    if (item.imageUrl) {
+      await deleteImageForItem(item); // Handle delete
+    } else {
+      fileRef.current && fileRef.current.click(); // Trigger change/upload
     }
   }
 
@@ -690,11 +671,9 @@ export default function OwnerDashboard() {
                           <ItemImageUpload
                             item={it}
                             onUploaded={(imageUrlOrNull, meta) => {
-                              // if upload finished (imageUrl string), call handleImageUploaded
                               if (typeof imageUrlOrNull === "string" && imageUrlOrNull) {
                                 handleImageUploaded(itemId, imageUrlOrNull);
                               } else if (meta && meta.action === "delete" && meta.item) {
-                                // handle delete action
                                 handleImageAction(meta.item);
                               }
                             }}
