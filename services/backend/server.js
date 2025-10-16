@@ -2,85 +2,36 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
 const http = require('http');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const Counter = require('./models/Counter');
-const mongoose = require('mongoose');
-const Shop = require('./models/Shop');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const cloudinary = require('cloudinary').v2;
-
 
 const app = express();
 const server = http.createServer(app);
 const { Server } = require('socket.io');
-// configure cloudinary from env (make sure these env vars exist)
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME || '',
-    api_key: process.env.CLOUDINARY_API_KEY || '',
-    api_secret: process.env.CLOUDINARY_API_SECRET || '',
-    secure: true
-});
-const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
-// FRONTEND origin (can be set in env)
-const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || "https://whatsapp-saas-frontend1.onrender.com").trim();
 
-// --- CORS setup (replace any existing corsOptions & app.use(cors(...)) ) ---
-// List allowed origins (add any other frontend domains here)
-const ALLOWED_ORIGINS = [
-    FRONTEND_ORIGIN,
-    "https://zync-customer-frontend.onrender.com",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "capacitor://localhost",
-    "http://localhost",
-    "http://10.0.2.2:5173"
-].filter(Boolean);
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "https://whatsapp-saas-frontend1.onrender.com";
 
-// CORS options allowing credentials and preflight
+// cors options (keep your original logic)
 const corsOptions = {
-    origin: function (origin, callback) {
-        // allow non-browser requests (curl, Postman, server-to-server)
-        if (!origin) return callback(null, true);
-
-        // exact match allowed origins
-        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-
-        // allow any localhost-like origin (helps when using LAN IPs during dev)
-        try {
-            const u = new URL(origin);
-            if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return callback(null, true);
-        } catch (e) {
-            // ignore invalid origin URL parse
-        }
-
-        // not allowed
-        console.warn('CORS: blocked origin ->', origin);
+    origin: (origin, callback) => {
+        if (!origin) return callback(null, true); // allow non-browser requests
+        if (origin === FRONTEND_ORIGIN) return callback(null, true);
         return callback(new Error('Not allowed by CORS'));
     },
-    methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-api-key"],
-    credentials: true,            // allow cookies / credentials
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key'],
+    credentials: true,
     preflightContinue: false,
     optionsSuccessStatus: 204
 };
-
-// Explicitly handle preflight OPTIONS requests (fast path)
-app.options('*', cors(corsOptions));
-
-// Apply CORS and body parsing
-app.use(cors(corsOptions));
-
 
 // apply cors + body parsing middleware
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-// app.use('/api/shops', require('./routes/shops'));
-
 
 // Socket.IO (allow any origin for socket connections; it's separate from express CORS)
 const io = new Server(server, {
@@ -149,6 +100,20 @@ customerSchema.index({ phone: 1 });
 const Customer = mongoose.models.Customer || mongoose.model('Customer', customerSchema);
 
 
+// Shop - includes address, online, pincode required
+const shopSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    phone: { type: String, required: true, unique: true },
+    description: String,
+    address: { type: String, required: true },
+    owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    lastOrderNumber: { type: Number, default: 0 },
+    pincode: { type: String, required: true },
+    online: { type: Boolean, default: true },
+    createdAt: { type: Date, default: Date.now },
+});
+shopSchema.index({ pincode: 1 });
+const Shop = mongoose.models.Shop || mongoose.model('Shop', shopSchema);
 
 // MenuItem
 const menuItemSchema = new mongoose.Schema({
@@ -157,23 +122,18 @@ const menuItemSchema = new mongoose.Schema({
     price: { type: Number, default: 0 }, // base price (used if no variants)
     available: { type: Boolean, default: true },
     externalId: { type: String },
-
-    // store image URL (public) and optional storage key (S3 key or filename)
-    imageUrl: { type: String, default: "" },
-    imageKey: { type: String, default: "" },
-
     // New: variants array for sub-items/options
+    // Each variant keeps an id, label (display), price (per unit), and availability
     variants: [
         {
-            id: { type: String },
-            label: { type: String },
-            price: { type: Number, default: 0 },
+            id: { type: String },          // owner-provided short id (e.g. "500g", "1kg", "A", "B")
+            label: { type: String },       // human-friendly text ("500 g", "1 kg")
+            price: { type: Number, default: 0 }, // price for this variant
             available: { type: Boolean, default: true }
         }
     ],
     createdAt: { type: Date, default: Date.now },
 });
-
 menuItemSchema.index({ shop: 1, externalId: 1 });
 const MenuItem = mongoose.models.MenuItem || mongoose.model('MenuItem', menuItemSchema);
 
@@ -285,53 +245,6 @@ const requireOwner = async (req, res, next) => {
     }
     next();
 };
-// POST /api/upload-cloud/:itemId
-// Accepts multipart/form-data field "image". Returns JSON { imageUrl, publicId }
-app.post('/api/upload-cloud/:itemId', requireOwner, memUpload.single('image'), async (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-        // stream upload to cloudinary
-        const streamUpload = (buffer) => {
-            return new Promise((resolve, reject) => {
-                const stream = cloudinary.uploader.upload_stream(
-                    { folder: process.env.CLOUDINARY_FOLDER || 'menu_items' },
-                    (error, result) => {
-                        if (error) return reject(error);
-                        resolve(result);
-                    }
-                );
-                stream.end(buffer);
-            });
-        };
-
-        const result = await streamUpload(req.file.buffer);
-        // result.secure_url is the HTTPS URL
-        const imageUrl = result.secure_url;
-        const publicId = result.public_id;
-
-        // Optionally persist onto MenuItem (best-effort). Use params: itemId and shop from req.body or try matching ownership
-        try {
-            const itemId = req.params.itemId;
-            if (itemId) {
-                // if you want to restrict by shop ownership, pass shop id in body or use req.body.shop
-                await MenuItem.findOneAndUpdate(
-                    { _id: itemId },
-                    { $set: { imageUrl, imageKey: publicId } },
-                    { new: true }
-                ).exec();
-            }
-        } catch (dbErr) {
-            console.warn('Warning: could not persist cloudinary image info:', dbErr && dbErr.message ? dbErr.message : dbErr);
-            // ignore DB errors; upload succeeded so we still return imageUrl
-        }
-
-        return res.json({ imageUrl, publicId });
-    } catch (err) {
-        console.error('upload-cloud error', err);
-        return res.status(500).json({ error: 'upload failed', detail: err && err.message ? err.message : err });
-    }
-});
 
 // requireCustomer - verify JWT with role 'customer'
 const requireCustomer = (req, res, next) => {
@@ -494,66 +407,6 @@ app.post('/auth/verify-otp', async (req, res) => {
 // Health
 app.get('/status', (req, res) => res.json({ status: 'ok', time: new Date() }));
 
-// Persist imageUrl (frontend calls this after upload)
-// POST /api/shops/:shopId/items/:itemId/image  { imageUrl, imageKey? }
-app.post('/api/shops/:shopId/items/:itemId/image', requireOwner, async (req, res) => {
-    try {
-        const { imageUrl, imageKey } = req.body || {};
-        if (!imageUrl) return res.status(400).json({ error: 'imageUrl required' });
-
-        // ensure owner owns the shop
-        const shop = await Shop.findById(req.params.shopId).lean();
-        if (!shop) return res.status(404).json({ error: 'shop not found' });
-        if (String(shop.owner) !== String(req.merchantId)) return res.status(403).json({ error: 'forbidden' });
-
-        const updated = await MenuItem.findOneAndUpdate(
-            { _id: req.params.itemId, shop: req.params.shopId },
-            { $set: { imageUrl: imageUrl, imageKey: imageKey || "" } },
-            { new: true }
-        ).lean();
-
-        if (!updated) return res.status(404).json({ error: 'item not found or not owner' });
-        return res.json({ ok: true, imageUrl: updated.imageUrl });
-    } catch (err) {
-        console.error('persist image error', err);
-        return res.status(500).json({ error: 'failed to save image url' });
-    }
-});
-
-// Delete image association (and optionally cloudinary resource if imageKey is a cloudinary public_id)
-// DELETE /api/shops/:shopId/items/:itemId/image
-app.delete('/api/shops/:shopId/items/:itemId/image', requireOwner, async (req, res) => {
-    try {
-        const shop = await Shop.findById(req.params.shopId).lean();
-        if (!shop) return res.status(404).json({ error: 'shop not found' });
-        if (String(shop.owner) !== String(req.merchantId)) return res.status(403).json({ error: 'forbidden' });
-
-        const item = await MenuItem.findOne({ _id: req.params.itemId, shop: req.params.shopId });
-        if (!item) return res.status(404).json({ error: 'item not found' });
-
-        const oldKey = item.imageKey || ""; // may be cloudinary public_id or filename (local)
-        // remove association
-        item.imageUrl = "";
-        item.imageKey = "";
-        await item.save();
-
-        // optional: remove Cloudinary asset if you store public_id in imageKey
-        if (process.env.CLOUDINARY_API_KEY && oldKey && oldKey.startsWith('menu_items/')) {
-            // adjust check based on how you store public_id (maybe no folder prefix)
-            try {
-                await cloudinary.uploader.destroy(oldKey, { invalidate: true });
-            } catch (e) {
-                console.warn('failed to delete cloudinary asset', oldKey, e && e.message);
-            }
-        }
-
-        return res.json({ ok: true });
-    } catch (err) {
-        console.error('delete image error', err);
-        return res.status(500).json({ error: 'failed to delete image' });
-    }
-});
-
 // Create shop (owner-only)
 app.post('/api/shops', requireOwner, async (req, res) => {
     try {
@@ -631,50 +484,36 @@ app.patch('/api/shops/:shopId', requireOwner, async (req, res) => {
 
 // Add menu item
 // Add menu item
-// server.js - replace the /api/shops/:shopId/items/:itemId/image handler with this
-app.post('/api/shops/:shopId/items/:itemId/image', requireOwner, async (req, res) => {
+app.post('/api/shops/:shopId/items', requireOwner, async (req, res) => {
     try {
-        // Accept imageUrl === "" as "clear the image". Only reject when undefined.
-        if (typeof req.body.imageUrl === 'undefined') {
-            return res.status(400).json({ error: 'imageUrl required' });
-        }
-        const imageUrl = req.body.imageUrl;   // may be "" to clear
-        const imageKey = req.body.imageKey || null;
+        const { name, price } = req.body;
+        if (!name) return res.status(400).json({ error: 'name required' });
 
-        // If clearing and we have an imageKey saved in DB, attempt to delete from Cloudinary (best-effort)
-        try {
-            if ((imageUrl === "" || imageUrl === null) && imageKey && cloudinary && typeof cloudinary.uploader.destroy === 'function') {
-                // imageKey might be public_id; destroy returns callback/promise depending on lib
-                await new Promise((resolve, reject) => {
-                    cloudinary.uploader.destroy(imageKey, (err, result) => {
-                        if (err) {
-                            console.warn('Cloudinary destroy warning:', err && err.message ? err.message : err);
-                            // don't fail the request; continue to clear DB
-                            return resolve(null);
-                        }
-                        resolve(result);
-                    });
-                });
-            }
-        } catch (e) {
-            console.warn('Cloudinary delete attempted and failed:', e && e.message ? e.message : e);
-        }
+        // Read variants safely from request body
+        const rawVariants = Array.isArray(req.body.variants) ? req.body.variants : [];
+        const normalizedVariants = rawVariants.map((v, idx) => ({
+            id: (v && v.id) ? String(v.id) : String(idx + 1),
+            label: (v && (v.label || v.id)) ? String(v.label || v.id) : `Option ${idx + 1}`,
+            price: Number((v && v.price) || 0),
+            available: typeof (v && v.available) === 'boolean' ? v.available : true,
+        }));
 
-        // Update DB: set imageUrl to provided value (could be empty string) and imageKey accordingly
-        const updated = await MenuItem.findOneAndUpdate(
-            { _id: req.params.itemId, shop: req.params.shopId },
-            { $set: { imageUrl: imageUrl || "", imageKey: imageKey || "" } },
-            { new: true }
-        ).lean();
+        const externalId = Math.random().toString(36).slice(2, 8).toUpperCase();
 
-        if (!updated) return res.status(404).json({ error: 'item not found or not owner' });
-        return res.json({ imageUrl: updated.imageUrl });
+        const item = await MenuItem.create({
+            shop: req.params.shopId,
+            name,
+            price: Number(price || 0),
+            externalId,
+            variants: normalizedVariants,
+        });
+
+        res.status(201).json(item);
     } catch (err) {
-        console.error('persist image error', err);
-        return res.status(500).json({ error: 'failed to save image url' });
+        console.error('Add menu item error:', err);
+        res.status(500).json({ error: 'failed to add item', detail: err.message });
     }
 });
-
 
 
 // Edit menu item
@@ -718,54 +557,6 @@ app.delete('/api/shops/:shopId/items/:itemId', requireOwner, async (req, res) =>
     } catch (e) {
         console.error('Delete item error', e);
         res.status(500).json({ error: 'failed' });
-    }
-});
-// DELETE /api/shops/:shopId/items/:itemId/image
-// removes imageUrl/imageKey from MenuItem and deletes local file or cloudinary asset if present
-app.delete('/api/shops/:shopId/items/:itemId/image', requireOwner, async (req, res) => {
-    try {
-        const shopId = req.params.shopId;
-        const itemId = req.params.itemId;
-
-        // find item and ensure ownership
-        const item = await MenuItem.findOne({ _id: itemId, shop: shopId }).lean();
-        if (!item) return res.status(404).json({ error: 'item not found' });
-
-        // delete from local uploads dir if imageKey is a filename (local)
-        try {
-            if (item.imageKey && !item.imageKey.startsWith('cloudinary:') && item.imageKey.indexOf('/') === -1) {
-                const localPath = path.join(__dirname, 'uploads', String(item.imageKey));
-                if (fs.existsSync(localPath)) {
-                    fs.unlinkSync(localPath);
-                }
-            }
-
-            // if using cloudinary and imageKey stored as publicId, delete cloudinary asset
-            if (item.imageKey && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-                // assume imageKey is public_id; if you stored specially, adapt accordingly
-                try {
-                    await cloudinary.uploader.destroy(item.imageKey);
-                } catch (e) {
-                    console.warn('cloudinary destroy failed', e && e.message ? e.message : e);
-                }
-            }
-        } catch (e) {
-            console.warn('Image file deletion warning:', e && e.message ? e.message : e);
-            // continue — we still will unset DB fields
-        }
-
-        // unset image fields on DB
-        const updated = await MenuItem.findOneAndUpdate(
-            { _id: itemId, shop: shopId },
-            { $set: { imageUrl: "", imageKey: "" } },
-            { new: true }
-        ).lean();
-
-        if (!updated) return res.status(404).json({ error: 'item not found or not owner' });
-        return res.json({ ok: true, imageUrl: updated.imageUrl });
-    } catch (err) {
-        console.error('delete image error', err);
-        return res.status(500).json({ error: 'failed to delete image' });
     }
 });
 
@@ -1295,6 +1086,16 @@ app.post('/webhook/whatsapp', async (req, res) => {
     res.end(twiml.toString());
 });
 
+try {
+    const itemsRouter = require('./routes/items');
+    if (itemsRouter && typeof itemsRouter === 'function') {
+        app.use('/api', itemsRouter());
+    } else if (itemsRouter) {
+        app.use('/api', itemsRouter);
+    }
+} catch (e) {
+    console.log('No external routes/items.js mounted or error requiring it (continuing):', e && e.message ? e.message : e);
+}
 
 
 
@@ -1313,18 +1114,6 @@ try {
     // if routes file is missing or throws, log and continue (we already defined inline routes)
     console.log('No external routes/orders.js mounted or error requiring it (continuing):', e && e.message ? e.message : e);
 }
-// Mount external routes after inline ones (so inline routes take precedence)
-try {
-    const shopsRouter = require('./routes/shops');
-    if (shopsRouter && typeof shopsRouter === 'function') {
-        app.use('/api/shops', shopsRouter());
-    } else if (shopsRouter) {
-        app.use('/api/shops', shopsRouter);
-    }
-} catch (e) {
-    console.log('No external routes/shops.js mounted or error requiring it (continuing):', e && e.message ? e.message : e);
-}
-
 
 /* Start server */
 server.listen(PORT, () => console.log(`Server running with Socket.io on port ${PORT}`));
