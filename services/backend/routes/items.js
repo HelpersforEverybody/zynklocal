@@ -24,6 +24,7 @@ const Shop = mongoose.model('Shop');
 // Uploads the image data (field name "image") to Cloudinary and returns { imageUrl, publicId }
 // Does not persist to DB; frontend can call the persist route (below) or we could persist here if desired.
 router.post('/api/upload-cloud/:itemId', upload.single('image'), async (req, res) => {
+    console.log('upload-cloud called for item', req.params.itemId);
     try {
         const itemId = req.params.itemId;
         if (!req.file) return res.status(400).json({ error: 'No file uploaded (field name: image)' });
